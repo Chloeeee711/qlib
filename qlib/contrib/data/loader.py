@@ -306,5 +306,38 @@ class Alpha158DL(QlibDataLoader):
                     for d in windows
                 ]
                 names += ["VSUMD%d" % d for d in windows]
+        
+        # Handle custom_fz group for FactorZoo factors
+        if "custom_fz" in config:
+            custom_fz_config = config["custom_fz"]
+            custom_features = custom_fz_config.get("feature", [])
+            custom_windows = custom_fz_config.get("windows", [240])
+            
+            for feature_expr in custom_features:
+                for window in custom_windows:
+                    # Replace window placeholder in expression if needed
+                    if "{window}" in feature_expr:
+                        expr = feature_expr.format(window=window)
+                    else:
+                        expr = feature_expr
+                    fields.append(expr)
+                    # Generate name based on expression content
+                    if "Max($high" in expr and "Min($low" in expr:
+                        names.append(f"FZ_MAXMIN{window}")
+                    elif "Mad($high" in expr:
+                        names.append(f"FZ_MAD{window}")
+                    elif "Std($close / Ref($close, 4)" in expr:
+                        names.append(f"FZ_UPSTD{window}")
+                    elif "Kurt" in expr:
+                        names.append(f"FZ_KURT{window}")
+                    elif "Corr(Ref($high, 1), $volume" in expr:
+                        names.append(f"FZ_CORR{window}")
+                    elif "Max($close, 240)" in expr:
+                        names.append(f"FZ_PEAK{window}")
+                    elif "Min($close / Ref($close, 7)" in expr:
+                        names.append(f"FZ_MIN{window}")
+                    else:
+                        # Fallback naming
+                        names.append(f"FZ_CUSTOM{len(fields)}")
 
         return fields, names
