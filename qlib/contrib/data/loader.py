@@ -321,23 +321,9 @@ class Alpha158DL(QlibDataLoader):
                     else:
                         expr = feature_expr
                     fields.append(expr)
-                    # Generate name based on expression content
-                    if "Max($high" in expr and "Min($low" in expr:
-                        names.append(f"FZ_MAXMIN{window}")
-                    elif "Mad($high" in expr:
-                        names.append(f"FZ_MAD{window}")
-                    elif "Std($close / Ref($close, 4)" in expr:
-                        names.append(f"FZ_UPSTD{window}")
-                    elif "Kurt" in expr:
-                        names.append(f"FZ_KURT{window}")
-                    elif "Corr(Ref($high, 1), $volume" in expr:
-                        names.append(f"FZ_CORR{window}")
-                    elif "Max($close, 240)" in expr:
-                        names.append(f"FZ_PEAK{window}")
-                    elif "Min($close / Ref($close, 7)" in expr:
-                        names.append(f"FZ_MIN{window}")
-                    else:
-                        # Fallback naming
-                        names.append(f"FZ_CUSTOM{len(fields)}")
+                    # Use original expression as name (cleaned up for column naming)
+                    # Replace special characters that might cause issues in column names
+                    clean_name = expr.replace(" ", "_").replace("(", "").replace(")", "").replace(",", "").replace("/", "_div_").replace("-", "_minus_").replace("+", "_plus_")
+                    names.append(clean_name)
 
         return fields, names
