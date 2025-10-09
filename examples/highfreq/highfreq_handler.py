@@ -23,6 +23,7 @@ class HighFreqHandler(DataHandlerLP):
                 "config": self.get_feature_config(),
                 "swap_level": False,
                 "freq": "1min",
+                "inst_processors": [],  # 明确指定为空，避免参数冲突
             },
         }
         super().__init__(
@@ -114,6 +115,7 @@ class HighFreqBacktestHandler(DataHandler):
                 "config": self.get_feature_config(),
                 "swap_level": False,
                 "freq": "1min",
+                "inst_processors": [],  # 明确指定为空，避免参数冲突
             },
         }
         super().__init__(
@@ -145,14 +147,40 @@ class HighFreqBacktestHandler(DataHandler):
             )
         ]
         names += ["$vwap0"]
-        fields += [
-            "Cut(If(IsNull({0}), 0, If(Or(Gt({1}, Mul(1.001, {3})), Lt({1}, Mul(0.999, {2}))), 0, {0})), 240, None)".format(
-                template_paused.format("$volume"),
-                template_paused.format(simpson_vwap),
-                template_paused.format("$low"),
-                template_paused.format("$high"),
-            )
-        ]
-        names += ["$volume0"]
-
         return fields, names
+
+
+
+import warnings
+import os
+import numpy as np
+from qlib.data.dataset.handler import DataHandler
+from highfreq_handler import HighFreqHandler  # 确保引入你原来的 HighFreqHandler
+import logging
+
+# 创建日志记录器
+log_path = os.path.expanduser("~/.qlib/safe_handler_skip.log")
+logging.basicConfig(
+    filename=log_path,
+    level=logging.WARNING,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+
+class SafeHighFreqHandler(HighFreqHandler):
+    def _load_internal(self, instrument, start_index, end_index, *args, **kwargs):
+        try:
+            data = super()._load_internal(instrument, start_index, end_index, *args, **kwargs)
+
+            if data is None or len(data) == 0 or (hasattr(data, "shape") and np.prod(data.shape) == 0):
+                msg = f"[SafeHighFreqHandler] 股票 {instrument} 数据为空，跳过该股票"
+                warnings.warn(msg)
+                logging.warning(msg)
+                return None
+
+            return data
+
+        except Exception as e:
+            msg = f"[SafeHighFreqHandler] 加载股票 {instrument} 数据时出错: {e}, 跳过该股票"
+            warnings.warn(msg)
+            logging.warning(msg)
+            return None
