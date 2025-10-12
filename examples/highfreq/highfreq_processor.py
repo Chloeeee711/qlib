@@ -39,29 +39,54 @@ class HighFreqNorm(Processor):
             print("警告: 输入数据为空，返回空DataFrame")
             return df_features.copy()
         
-        # 简化处理：只进行基本的标准化，不进行复杂的reshape
-        df_values = df_features.values.copy()
+        # 分离特征列和标签列
+        feature_cols = [col for col in df_features.columns if col[0] == "feature"]
+        label_cols = [col for col in df_features.columns if col[0] == "label"]
         
-        # 简单的标准化处理
-        for i in range(df_values.shape[1]):
-            col_data = df_values[:, i]
-            # 检查列数据是否为空或全为NaN
-            if len(col_data) == 0 or np.all(np.isnan(col_data)):
-                print(f"警告: 第{i}列数据为空或全为NaN，跳过处理")
-                continue
-                
-            # 简单的z-score标准化
-            mean_val = np.nanmean(col_data)
-            std_val = np.nanstd(col_data)
-            if std_val > 0 and not np.isnan(mean_val) and not np.isnan(std_val):
-                df_values[:, i] = (col_data - mean_val) / std_val
-            else:
-                print(f"警告: 第{i}列标准化参数无效，保持原值")
+        # 处理特征列
+        if feature_cols:
+            feature_data = df_features[feature_cols]
+            df_values = feature_data.values.copy()
+            
+            # 简单的标准化处理
+            for i in range(df_values.shape[1]):
+                col_data = df_values[:, i]
+                # 检查列数据是否为空或全为NaN
+                if len(col_data) == 0 or np.all(np.isnan(col_data)):
+                    print(f"警告: 第{i}列数据为空或全为NaN，跳过处理")
+                    continue
+                    
+                # 简单的z-score标准化
+                mean_val = np.nanmean(col_data)
+                std_val = np.nanstd(col_data)
+                if std_val > 0 and not np.isnan(mean_val) and not np.isnan(std_val):
+                    df_values[:, i] = (col_data - mean_val) / std_val
+                else:
+                    print(f"警告: 第{i}列标准化参数无效，保持原值")
+            
+            # 创建处理后的特征列，保持多级列名结构
+            processed_features = pd.DataFrame(
+                data=df_values,
+                index=feature_data.index,
+                columns=feature_data.columns,
+            )
+        else:
+            processed_features = pd.DataFrame(index=df_features.index)
         
-        # 直接返回处理后的数据，不进行reshape
-        df_new_features = pd.DataFrame(
-            data=df_values,
-            index=df_features.index,
-            columns=df_features.columns,
-        )
-        return df_new_features
+        # 处理标签列（保持原样）
+        if label_cols:
+            processed_labels = df_features[label_cols]
+        else:
+            processed_labels = pd.DataFrame(index=df_features.index)
+        
+        # 合并特征和标签
+        if not processed_features.empty and not processed_labels.empty:
+            result = pd.concat([processed_features, processed_labels], axis=1)
+        elif not processed_features.empty:
+            result = processed_features
+        elif not processed_labels.empty:
+            result = processed_labels
+        else:
+            result = pd.DataFrame(index=df_features.index)
+        
+        return result

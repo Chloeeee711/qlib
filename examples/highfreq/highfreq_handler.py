@@ -99,7 +99,11 @@ class HighFreqHandler(DataHandlerLP):
         ]
         names += ["$volume_1"]
 
-        return fields, names
+        # 返回多组配置，支持多级列名
+        return {
+            "feature": (fields, names),
+            "label": (["Ref($close, -1) / $close - 1"], ["LABEL0"])
+        }
 
 
 class HighFreqBacktestHandler(DataHandler):
