@@ -14,11 +14,13 @@ from qlib.data.ops import Operators
 from qlib.data.data import Cal
 from qlib.tests.data import GetData
 
-from highfreq_ops import get_calendar_day, DayLast, FFillNan, BFillNan, Date, Select, IsNull, Cut
+from highfreq_ops import get_calendar_day, DayLast, FFillNan, BFillNan, Date, Select, IsNull, DayFirst, IntradayWindowVWAP, DayShift
+from qlib.contrib.ops.high_freq import Cut
 
 
 class HighfreqWorkflow:
-    SPEC_CONF = {"custom_ops": [DayLast, FFillNan, BFillNan, Date, Select, IsNull, Cut], "expression_cache": None}
+    # Register required custom/contrib operators including Cut
+    SPEC_CONF = {"custom_ops": [DayLast, FFillNan, BFillNan, Date, Select, IsNull, DayFirst, IntradayWindowVWAP, DayShift, Cut], "expression_cache": None}
 
     MARKET = "all"
 
