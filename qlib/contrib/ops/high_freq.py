@@ -197,7 +197,9 @@ class Select(PairOperator):
     def _load_internal(self, instrument, start_index, end_index, freq):
         series_condition = self.feature_left.load(instrument, start_index, end_index, freq)
         series_feature = self.feature_right.load(instrument, start_index, end_index, freq)
-        return series_feature.loc[series_condition]
+        # Align condition index to feature index to avoid unalignable boolean Series
+        mask = series_condition.reindex(series_feature.index, fill_value=False)
+        return series_feature[mask]
 
 
 class IsNull(ElemOperator):

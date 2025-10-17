@@ -26,7 +26,7 @@ pip install tqsdk pandas numpy loguru fire
 
 ```bash
 # 下载默认股票池数据
-python scripts/data_collector/KQ/KQcollector.py download_data \
+python scripts/data_collector/KQ/KQdownloader.py download_data \
     --source_dir ~/kq_data \
     --start 2024-01-01 \
     --end 2025-12-31 \
@@ -38,7 +38,7 @@ python scripts/data_collector/KQ/KQcollector.py download_data \
 
 ```bash
 # 从CSV文件读取股票池
-python scripts/data_collector/KQ/KQcollector.py download_data \
+python scripts/data_collector/KQ/KQdownloaderor.py download_data \
     --source_dir ~/kq_data \
     --start 2024-01-01 \
     --end 2025-12-31 \
@@ -51,7 +51,7 @@ python scripts/data_collector/KQ/KQcollector.py download_data \
 
 ```bash
 # 使用天勤账户（可选）
-python scripts/data_collector/KQ/KQcollector.py download_data \
+python scripts/data_collector/KQ/KQdownloader.py download_data \
     --source_dir ~/kq_data \
     --start 2024-01-01 \
     --end 2025-12-31 \
@@ -65,7 +65,7 @@ python scripts/data_collector/KQ/KQcollector.py download_data \
 
 ```bash
 # 运行完整流程
-python scripts/data_collector/KQ/KQcollector.py run \
+python scripts/data_collector/KQ/KQdownloader.py run \
     --source_dir ~/kq_data \
     --target_dir ~/.qlib/qlib_data/cn_data_1min \
     --start 2024-01-01 \
@@ -150,6 +150,24 @@ collector = KQRun(
 # 运行完整流程
 collector.run(start="2024-01-01", end="2025-12-31")
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
