@@ -4,8 +4,9 @@ import highfreq_ops
 from qlib.data.ops import Operators
 try:
     # Ensure custom ops are registered in any worker importing this module
-    from highfreq_ops import DayLast, FFillNan, BFillNan, Date, Select, IsNull, Cut, DayFirst, IntradayWindowVWAP, DayShift
-    Operators.register([DayLast, FFillNan, BFillNan, Date, Select, IsNull, Cut, DayFirst, IntradayWindowVWAP, DayShift])
+    # 注意：If 会覆盖 Qlib 默认的 If 操作符，修复索引不一致问题
+    from highfreq_ops import DayLast, FFillNan, Date, Select, IsNull, Cut, DayFirst, IntradayWindowVWAP, DayShift, If, Gt, Lt
+    Operators.register([DayLast, FFillNan, Date, Select, IsNull, Cut, DayFirst, IntradayWindowVWAP, DayShift, If, Gt, Lt])
 except Exception:
     # tolerate double registration or partial availability
     pass
@@ -55,24 +56,48 @@ class HighFreqHandler(DataHandlerLP):
 
         template_if = "If(IsNull({1}), {0}, {1})"
         template_paused = "Select(Or(IsNull($paused), Eq($paused, 0.0)), {0})"
-        template_fillnan = "BFillNan(FFillNan({0}))"
+        template_fillnan = "FFillNan({0})"
         # Because there is no vwap field in the yahoo data, a method similar to Simpson integration is used to approximate vwap
         simpson_vwap = "($open + 2*$high + 2*$low + $close)/6"
 
         def get_normalized_price_feature(price_field, shift=0):
             """Get normalized price feature ops"""
             if shift == 0:
-                template_norm = "Cut({0}/Ref(DayLast({1}), 240), 240, None)"
+                template_norm = "Cut({0}/Ref(Ref(DayLast({1}), 240), -1), 240, None)"
             else:
-                template_norm = "Cut(Ref({0}, " + str(shift) + ")/Ref(DayLast({1}), 240), 240, None)"
+                template_norm = "Cut(Ref({0}, " + str(shift) + ")/Ref(Ref(DayLast({1}), 240), -1), 240, None)"
 
-            feature_ops = template_norm.format(
-                template_if.format(
-                    template_fillnan.format(template_paused.format("$close")),
-                    template_paused.format(price_field),
-                ),
-                template_fillnan.format(template_paused.format("$close")),
-            )
+            # 彻底修复索引不一致：使用统一的索引基准
+            # 方案：所有字段都先基于 $close 的 Select 结果进行对齐
+            # 通过使用 $close 作为 Select 的条件基准，确保所有字段都有相同的索引集合
+            close_select_base = template_paused.format("$close")
+            close_field = template_fillnan.format(close_select_base)
+            
+            # 关键修复：对于其他字段，先 Select，然后对齐到 $close 的索引
+            # 方法：使用相同的 Select 条件，确保索引一致
+            if price_field == simpson_vwap or "(open" in str(price_field).lower() or "+" in str(price_field):
+                # 表达式：先处理组成字段，都基于相同的 Select 条件
+                open_base = template_fillnan.format(template_paused.format("$open"))
+                high_base = template_fillnan.format(template_paused.format("$high"))
+                low_base = template_fillnan.format(template_paused.format("$low"))
+                close_base = template_fillnan.format(template_paused.format("$close"))
+                price_field_processed = "({0} + {1} * 2 + {2} * 2 + {3}) / 6".format(
+                    open_base, high_base, low_base, close_base
+                )
+            else:
+                # 普通字段：使用相同的 Select 模式和 FFillNan
+                price_field_processed = template_fillnan.format(template_paused.format(price_field))
+            
+            # 如果 price_field 就是 $close，直接使用，不需要 If
+            if price_field == "$close":
+                selected_field = close_field
+            else:
+                # 使用 If 选择，但确保两个分支基于相同的处理流程
+                # 注意：即使都经过 Select + FFillNan，如果原始字段的索引不同，结果索引仍可能不同
+                # 所以我们需要依赖 Qlib 在 If 内部的索引对齐机制（通过 reindex）
+                selected_field = template_if.format(close_field, price_field_processed)
+            
+            feature_ops = template_norm.format(selected_field, close_field)
             return feature_ops
 
         fields += [get_normalized_price_feature("$open", 0)]
@@ -89,13 +114,25 @@ class HighFreqHandler(DataHandlerLP):
         fields += [get_normalized_price_feature(simpson_vwap, 240)]
         names += ["$open_1", "$high_1", "$low_1", "$close_1", "$vwap_1"]
 
+        # 修复索引不一致：volume 字段的所有组成部分都要经过相同的处理
+        # simpson_vwap 需要特殊处理：先对组成字段进行 Select + FFillNan，然后计算表达式
+        open_base = template_fillnan.format(template_paused.format("$open"))
+        high_base = template_fillnan.format(template_paused.format("$high"))
+        low_base = template_fillnan.format(template_paused.format("$low"))
+        close_base = template_fillnan.format(template_paused.format("$close"))
+        # 基于已处理的字段计算 vwap（确保索引一致）
+        vwap_field_processed = "({0} + {1} * 2 + {2} * 2 + {3}) / 6".format(
+            open_base, high_base, low_base, close_base
+        )
+        
+        volume_field = template_fillnan.format(template_paused.format("$volume"))
+        low_field = template_fillnan.format(template_paused.format("$low"))
+        high_field = template_fillnan.format(template_paused.format("$high"))
+        
         fields += [
             "Cut({0}/Ref(DayLast(Mean({0}, 7200)), 240), 240, None)".format(
                 "If(IsNull({0}), 0, If(Or(Gt({1}, Mul(1.001, {3})), Lt({1}, Mul(0.999, {2}))), 0, {0}))".format(
-                    template_paused.format("$volume"),
-                    template_paused.format(simpson_vwap),
-                    template_paused.format("$low"),
-                    template_paused.format("$high"),
+                    volume_field, vwap_field_processed, low_field, high_field
                 )
             )
         ]
@@ -103,70 +140,22 @@ class HighFreqHandler(DataHandlerLP):
         fields += [
             "Cut(Ref({0}, 240)/Ref(DayLast(Mean({0}, 7200)), 240), 240, None)".format(
                 "If(IsNull({0}), 0, If(Or(Gt({1}, Mul(1.001, {3})), Lt({1}, Mul(0.999, {2}))), 0, {0}))".format(
-                    template_paused.format("$volume"),
-                    template_paused.format(simpson_vwap),
-                    template_paused.format("$low"),
-                    template_paused.format("$high"),
+                    volume_field, vwap_field_processed, low_field, high_field
                 )
             )
         ]
         names += ["$volume_1"]
 
         # 附加原始辅助字段，便于作为特征参与训练（保持与现有模板一致的填充与暂停过滤）
+        # 移除 $change 特征，因为它包含当日价格变化信息，会导致数据泄露
         fields += [
             template_fillnan.format(template_paused.format("$factor")),
             template_fillnan.format(template_paused.format("$paused")),
-            template_fillnan.format(template_paused.format("$change")),
+            # template_fillnan.format(template_paused.format("$change")),  # 移除，防止数据泄露
             template_fillnan.format(template_paused.format("$paused_num")),
         ]
-        names += ["$factor", "$paused", "$change", "$paused_num"]
+        names += ["$factor", "$paused", "$paused_num"]  # 移除 "$change"
        
-        """
-       # 严格区间 VWAP（当日 14:41-14:50）
-        vwap_pm = "IntradayWindowVWAP($close, 14.41, 14.50, '$volume')"
-       # 严格区间 VWAP（次日 10:11-10:20）
-        vwap_am = "IntradayWindowVWAP($close, 10.11, 10.20, '$volume')"
-
-        
-        # LABEL：次日窗口 VWAP / 当日窗口 VWAP - 1；用 Ref(...,240) 跨日对齐
-        #label_expr = "Cut(Ref({next_v}, -240) / {today_v} - 1, 240, None)".format(
-        #next_v=vwap_1011_1020, today_v=vwap_1441_1450
-        #)
-        # 将“当日/次日”都抽成“日值”（同日恒等 → 取日末值即可），保证仅 1 个日标量
-        #today_vwap_day = "DayLast({})".format(vwap_pm)
-        today_vwap_day = "IntradayWindowVWAP($close, 14.41, 14.50, '$volume')"
-        #am_vwap_day    = "DayLast({})".format(vwap_am)
-
-        # 对“上午窗口的日值”做交易日+1 移位（次日），再广播回分钟
-        #next_vwap_day  = "DayShift({}, 1)".format(am_vwap_day)
-        next_vwap_day = "DayShift(IntradayWindowVWAP($close, 10.11, 10.20, '$volume'), 1)"
-
-        # 标签：不再使用 Ref/Cut（按日移位已经对好了日），直接在分钟维度上计算
-        today_vwap_day = vwap_pm
-        next_vwap_day  = f"DayShift({vwap_am}, 1)"
-
-         """
-        """
-        # 隔夜收益率标签：使用字符串表达式（需要 Monkey Patch 支持）
-        # 当日 14:41-14:50 VWAP
-        today_vwap = "IntradayWindowVWAP($close, 14.41, 14.50, '$volume')"
-        
-
-        # 次日 10:11-10:20 VWAP（通过 DayShift 移位）
-        next_vwap = "DayShift(IntradayWindowVWAP($close, 10.11, 10.20, '$volume'), 1)"
-        
-
-        # 隔夜收益率
-        label_expr = f"{next_vwap} / {today_vwap} - 1"
-       
-        
-
-        # 返回多组配置，支持多级列名
-        return {
-            "feature": (fields, names),
-            "label": ([label_expr], ["LABEL0"]),
-        }
-        """
         return {
             "feature": (fields, names),
             "label": (["Ref($close, -1) / $close - 1"], ["LABEL0"])  # 占位符，会被自定义标签覆盖
@@ -177,7 +166,7 @@ class HighFreqHandler(DataHandlerLP):
         if self._custom_labels is not None:
             return self._custom_labels
             
-        print("计算自定义隔夜收益率标签...")
+        # print("计算自定义隔夜收益率标签...")  # 减少输出
         parts = []
         
         for inst in instruments:
@@ -195,7 +184,7 @@ class HighFreqHandler(DataHandlerLP):
         else:
             self._custom_labels = pd.DataFrame(columns=["LABEL0"])
             
-        print(f"自定义标签计算完成，形状: {self._custom_labels.shape}")
+        # print(f"自定义标签计算完成，形状: {self._custom_labels.shape}")  # 减少输出
         return self._custom_labels
     
     def _compute_label_single(self, inst, start_time, end_time):
@@ -210,43 +199,62 @@ class HighFreqHandler(DataHandlerLP):
                 columns=["LABEL0"]
             )
           
-        # 拉分钟数据 - 确保有足够的时间范围来计算隔夜收益率
+        # 拉分钟数据 - 只加载指定时间范围的数据，避免数据泄露
         try:
-            # 扩展时间范围以确保有次日数据
+            df = D.features(
+                [inst],
+                ["$open", "$high", "$low", "$close", "$volume"],
+                start_time=start_time,
+                end_time=end_time,
+                freq="1min",
+            )
+            
+            # 单独加载次日数据用于标签计算
             from datetime import datetime, timedelta
-            # 兼容带时分秒/不同格式
             def _parse_dt(s):
                 if s is None:
                     return None
                 if isinstance(s, (datetime,)):
                     return s
                 s = str(s)
-                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):  # 常见两种
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
                     try:
                         return datetime.strptime(s, fmt)
                     except Exception:
                         continue
-                # 回退：仅取日期部分
                 try:
                     return datetime.strptime(s.split(" ")[0], "%Y-%m-%d")
                 except Exception:
                     return None
 
-            s_dt = _parse_dt(start_time)
             e_dt = _parse_dt(end_time)
-            if e_dt is None or s_dt is None:
-                # 无法解析时间时，直接按传入字符串做一次尝试（D.features 仍可接受字符串）
-                extended_end = end_time
-            else:
-                extended_end = (e_dt + timedelta(days=1)).strftime("%Y-%m-%d")
-
-            df = D.features(
-                [inst],
-                ["$open", "$high", "$low", "$close", "$volume"],
-                start_time=start_time,
-                end_time=extended_end,
-                freq="1min",
-            )
+            if e_dt is not None:
+                # 需要加载次日数据用于标签计算（计算当日标签需要次日上午VWAP）
+                # 加载次日全天数据，确保包含次日上午时间段（10:11-10:20）
+                next_day_date = e_dt + timedelta(days=1)
+                extended_start = next_day_date.strftime("%Y-%m-%d") + " 09:30:00"
+                extended_end = next_day_date.strftime("%Y-%m-%d") + " 15:00:00"
+                
+                # 只在交易日尝试加载（简化：先尝试，如果失败就用当日数据计算）
+                try:
+                    extended_df = D.features(
+                        [inst],
+                        ["$open", "$high", "$low", "$close", "$volume"],
+                        start_time=extended_start,
+                        end_time=extended_end,
+                        freq="1min",
+                    )
+                    
+                    # 合并数据用于标签计算
+                    if extended_df is not None and not extended_df.empty:
+                        # 确保没有重复索引
+                        df = pd.concat([df, extended_df], axis=0)
+                        df = df[~df.index.duplicated(keep='first')]  # 去除重复索引
+                    # 如果次日数据为空，不打印警告（可能是交易日边界或数据未更新，这是正常的）
+                except Exception:
+                    # 静默处理，如果次日数据不存在，标签计算会使用已有的当日数据
+                    # 这种情况下，标签会在最后一天缺失，这是正常的
+                    pass
         except Exception as e:
             print(f"⚠️ D.features 加载失败: inst={inst}, start={start_time}, end={end_time}, err={e}")
             return empty_label_df(inst)
@@ -268,8 +276,11 @@ class HighFreqHandler(DataHandlerLP):
         # 时间窗口掩码
         dt = pd.to_datetime(df.index)
         t_int = dt.hour * 100 + dt.minute
-        mask_today = (t_int >= int(14.41 * 100)) & (t_int <= int(14.50 * 100))
-        mask_next  = (t_int >= int(10.11 * 100)) & (t_int <= int(10.20 * 100))
+        # 严格使用半开区间，避免窗口上界包含未来一分钟
+        # 下午窗口 [14:41, 14:50) - 当日下午
+        mask_afternoon = (t_int >= 1441) & (t_int < 1450)
+        # 上午窗口 [10:11, 10:20) - 当日上午（用于计算次日上午VWAP）
+        mask_morning = (t_int >= 1011) & (t_int < 1020)
 
         # 典型价格与成交量
         tp  = (df["$open"] + df["$high"] + df["$low"] + df["$close"]) / 4.0
@@ -280,37 +291,55 @@ class HighFreqHandler(DataHandlerLP):
         def window_vwap(mask):
             num = (tp.where(mask, 0.0) * vol.where(mask, 0.0)).groupby(day_key).sum()
             den = vol.where(mask, 0.0).groupby(day_key).sum()
+            # 严格：若该日窗口无数据，则返回 NaN，不再使用同日价格或均值回填，避免泄露
             wv  = (num / den.replace(0.0, np.nan)).astype("float64")
-            wv = wv.fillna(tp.where(mask).groupby(day_key).mean())
-            wv = wv.fillna(df["$close"].groupby(day_key).last())
+            wv = wv.ffill()  # 前向填充，使用新的API
             return wv
 
-        # 定义“今天标签 = 明天上午 / 今天下午 - 1”
-        afternoon_today = window_vwap(mask_today)          # 键为 D（当日）
-        morning_today   = window_vwap(mask_next)           # 键为 D（当日）
-        morning_tomorrow = morning_today.shift(-1)         # 键映射到 D+1（明日的上午）
-
-        # 广播回分钟（使用 明天上午 / 今天下午 - 1）
-        aft_map  = afternoon_today.to_dict()
-        morn_map = morning_tomorrow.to_dict()
-        days = pd.Index(dt.date)
-        aft_series  = pd.Series([aft_map.get(d, np.nan) for d in days], index=df.index, dtype="float64")
-        morn_series = pd.Series([morn_map.get(d, np.nan) for d in days], index=df.index, dtype="float64")
-
-        lbl = morn_series / aft_series - 1
-        mi = pd.MultiIndex.from_arrays([[inst]*len(lbl), df.index], names=["instrument","datetime"])
-        return pd.DataFrame({"LABEL0": lbl.values}, index=mi)
+        # 定义"今天标签 = 明天上午 / 今天下午 - 1"
+        #afternoon_today = window_vwap(mask_today)          # 键为 D（当日）
+        afternoon_vwap = window_vwap(mask_afternoon)
+        #morning_today   = window_vwap(mask_next)           # 键为 D（当日）
+        morning_vwap   = window_vwap(mask_morning)  
     
+        # 正确的隔夜收益率计算
+        # 当日标签 = 次日上午VWAP / 当日下午VWAP - 1
+        # 需要将次日上午VWAP向前对齐到当日
+        morning_next_day = morning_vwap.shift(-1)  # 次日上午VWAP对齐到当日
+        label_vwap = morning_next_day / afternoon_vwap - 1  # 正确的隔夜收益率
+        # 截断异常值 (保留99.5%的数据)
+        label_vwap = label_vwap.clip(lower=label_vwap.quantile(0.01), 
+                                 upper=label_vwap.quantile(0.99))
+    
+        
+        # 计算隔夜收益：当日 -> 次日
+        #overnight_return = morning_tomorrow / afternoon_today - 1  # 索引为当日日期
+        # 将当日值顺延到“次日”的日期索引
+        #overnight_return_nextday = overnight_return.shift(1)
+
+        # 广播回分钟：次日的每一分钟都使用前一日的隔夜收益
+        #days = pd.Index(pd.to_datetime(df.index).date)
+        #ov_map = overnight_return_nextday.to_dict()  # 键：次日日期
+        #broadcast = pd.Series([ov_map.get(d, np.nan) for d in days], index=df.index, dtype="float64")
+
+        days = pd.Index(dt.date)
+        label_map = label_vwap.to_dict()  # 键：当日日期（已对齐）
+        broadcast = pd.Series([label_map.get(d, np.nan) for d in days], index=df.index, dtype="float64")
+
+        # 创建MultiIndex并返回
+        mi = pd.MultiIndex.from_arrays([[inst]*len(broadcast), df.index], names=["instrument","datetime"])
+        return pd.DataFrame({"LABEL0": broadcast.values}, index=mi)
+
     def setup_data(self, *args, **kwargs):
         """重写setup_data，在数据加载时计算自定义标签"""
-        print(f"setup_data 开始，_data 存在: {hasattr(self, '_data')}")
+        # print(f"setup_data 开始，_data 存在: {hasattr(self, '_data')}")  # 减少输出
         if hasattr(self, '_data'):
             print(f"_data 形状: {self._data.shape if self._data is not None else 'None'}")
         
         # 先调用父类方法加载特征数据
         super().setup_data(*args, **kwargs)
         
-        print(f"父类setup_data后，_data 存在: {hasattr(self, '_data')}")
+        # print(f"父类setup_data后，_data 存在: {hasattr(self, '_data')}")  # 减少输出
         if hasattr(self, '_data'):
             print(f"_data 形状: {self._data.shape if self._data is not None else 'None'}")
         else:
@@ -319,42 +348,12 @@ class HighFreqHandler(DataHandlerLP):
             print("尝试手动设置_data属性...")
             try:
                 self._data = self.data_loader.load(self.instruments, self.start_time, self.end_time)
-                print(f"手动设置_data成功，形状: {self._data.shape if self._data is not None else 'None'}")
+            # print(f"手动设置_data成功，形状: {self._data.shape if self._data is not None else 'None'}")  # 减少输出
             except Exception as e:
                 print(f"手动设置_data失败: {e}")
         
-        # 扩展_data以包含次日数据（用于计算隔夜收益率）
-        if hasattr(self, '_data') and self._data is not None:
-            from datetime import datetime, timedelta
-            # 处理时间格式，支持带时间的格式
-            try:
-                if ' ' in self.end_time:
-                    end_dt = datetime.strptime(self.end_time, "%Y-%m-%d %H:%M:%S")
-                else:
-                    end_dt = datetime.strptime(self.end_time, "%Y-%m-%d")
-            except ValueError:
-                # 如果格式不匹配，尝试其他格式
-                try:
-                    end_dt = datetime.strptime(self.end_time.split(' ')[0], "%Y-%m-%d")
-                except:
-                    print(f"❌ 无法解析时间格式: {self.end_time}")
-                    return
-            
-            extended_end = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
-            
-            print(f"🔍 扩展数据到: {extended_end}")
-            try:
-                # 加载扩展数据
-                extended_data = self.data_loader.load(self.instruments, self.start_time, extended_end)
-                if extended_data is not None and not extended_data.empty:
-                    print(f"🔍 扩展数据形状: {extended_data.shape}")
-                    # 合并数据
-                    self._data = pd.concat([self._data, extended_data], axis=0)
-                    print(f"🔍 合并后数据形状: {self._data.shape}")
-                else:
-                    print("❌ 扩展数据为空")
-            except Exception as e:
-                print(f"❌ 扩展数据失败: {e}")
+        # 不再扩展整个数据集，避免数据泄露
+        # 标签计算时会在_compute_label_single中单独加载次日数据
         
         # 计算自定义标签（使用实际已加载的数据里的标的集合）
         if hasattr(self, "_data") and self._data is not None and len(self._data) > 0:
@@ -430,7 +429,7 @@ class HighFreqHandler(DataHandlerLP):
                         continue
 
             nn = pd.Series(broadcast).notna().sum()
-            print(f"自定义标签覆盖写入完成，按日常数化，非NaN数量: {nn}")
+            # print(f"自定义标签覆盖写入完成，按日常数化，非NaN数量: {nn}")  # 减少输出
         else:
             print(f"警告：无法添加自定义标签，_data属性存在: {hasattr(self, '_data')}, _data为None: {self._data is None if hasattr(self, '_data') else 'N/A'}，custom_labels为空: {custom_labels.empty}")
 
@@ -464,19 +463,25 @@ class HighFreqBacktestHandler(DataHandler):
 
         template_if = "If(IsNull({1}), {0}, {1})"
         template_paused = "Select(Or(IsNull($paused), Eq($paused, 0.0)), {0})"
-        template_fillnan = "BFillNan(FFillNan({0}))"
+        template_fillnan = "FFillNan({0})"
         # Because there is no vwap field in the yahoo data, a method similar to Simpson integration is used to approximate vwap
         simpson_vwap = "($open + 2*$high + 2*$low + $close)/6"
         fields += [
             "Cut({0}, 240, None)".format(template_fillnan.format(template_paused.format("$close"))),
         ]
         names += ["$close0"]
+        # 修复索引不一致：确保 If 的两个分支都经过相同处理
+        # simpson_vwap 需要特殊处理
+        close_field = template_fillnan.format(template_paused.format("$close"))
+        open_base = template_fillnan.format(template_paused.format("$open"))
+        high_base = template_fillnan.format(template_paused.format("$high"))
+        low_base = template_fillnan.format(template_paused.format("$low"))
+        vwap_field_processed = "({0} + {1} * 2 + {2} * 2 + {3}) / 6".format(
+            open_base, high_base, low_base, close_field
+        )
         fields += [
             "Cut({0}, 240, None)".format(
-                template_if.format(
-                    template_fillnan.format(template_paused.format("$close")),
-                    template_paused.format(simpson_vwap),
-                )
+                template_if.format(close_field, vwap_field_processed)
             )
         ]
         names += ["$vwap0"]

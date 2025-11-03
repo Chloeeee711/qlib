@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import importlib
-from qlib.data.ops import ElemOperator, PairOperator
+from qlib.data.ops import ElemOperator, PairOperator, ExpressionOps
 from qlib.config import C
 from qlib.data.cache import H
 from qlib.data.data import Cal
@@ -305,3 +305,284 @@ class DayShift(ElemOperator):
 
     def get_extended_window_size(self):
         return self.feature.get_extended_window_size()
+
+
+class Gt(ExpressionOps):
+    """Greater Than Operator with automatic index alignment
+    
+    修复原版 Gt 操作符的索引不一致问题：自动对齐两个序列的索引
+    """
+    from qlib.data.base import Expression
+    
+    def __init__(self, feature_left, feature_right):
+        self.feature_left = feature_left
+        self.feature_right = feature_right
+    
+    def __str__(self):
+        return "Gt({},{})".format(self.feature_left, self.feature_right)
+    
+    def _load_internal(self, instrument, start_index, end_index, *args):
+        from qlib.data.base import Expression
+        
+        # 加载两个序列
+        if isinstance(self.feature_left, (Expression,)):
+            series_left = self.feature_left.load(instrument, start_index, end_index, *args)
+        else:
+            series_left = self.feature_left
+        if isinstance(self.feature_right, (Expression,)):
+            series_right = self.feature_right.load(instrument, start_index, end_index, *args)
+        else:
+            series_right = self.feature_right
+        
+        # 对齐索引
+        if series_left is None or not isinstance(series_left, pd.Series) or len(series_left) == 0:
+            if series_right is not None and isinstance(series_right, pd.Series) and len(series_right) > 0:
+                series_left = pd.Series(np.nan, index=series_right.index)
+            else:
+                return pd.Series(dtype='bool')
+        
+        if series_right is None or not isinstance(series_right, pd.Series) or len(series_right) == 0:
+            if series_left is not None and isinstance(series_left, pd.Series) and len(series_left) > 0:
+                series_right = pd.Series(np.nan, index=series_left.index)
+            else:
+                return pd.Series(dtype='bool')
+        
+        # 处理标量值
+        if not isinstance(series_left, pd.Series):
+            if isinstance(series_right, pd.Series) and len(series_right) > 0:
+                series_left = pd.Series([float(series_left)] * len(series_right), index=series_right.index)
+            else:
+                return pd.Series(dtype='bool')
+        
+        if not isinstance(series_right, pd.Series):
+            if isinstance(series_left, pd.Series) and len(series_left) > 0:
+                series_right = pd.Series([float(series_right)] * len(series_left), index=series_left.index)
+            else:
+                return pd.Series(dtype='bool')
+        
+        # 使用左侧序列的索引作为基准（因为左侧通常是计算结果）
+        target_index = series_left.index
+        series_right = series_right.reindex(target_index, fill_value=np.nan)
+        
+        # 执行比较
+        return pd.Series(series_left > series_right, index=target_index)
+    
+    def get_longest_back_rolling(self):
+        from qlib.data.base import Expression
+        left_br = self.feature_left.get_longest_back_rolling() if isinstance(self.feature_left, (Expression,)) else 0
+        right_br = self.feature_right.get_longest_back_rolling() if isinstance(self.feature_right, (Expression,)) else 0
+        return max(left_br, right_br)
+    
+    def get_extended_window_size(self):
+        from qlib.data.base import Expression
+        if isinstance(self.feature_left, (Expression,)):
+            left_l, left_r = self.feature_left.get_extended_window_size()
+        else:
+            left_l, left_r = 0, 0
+        if isinstance(self.feature_right, (Expression,)):
+            right_l, right_r = self.feature_right.get_extended_window_size()
+        else:
+            right_l, right_r = 0, 0
+        return max(left_l, right_l), max(left_r, right_r)
+    
+    def load(self, instrument, start_index, end_index, freq):
+        return self._load_internal(instrument, start_index, end_index, freq)
+
+
+class Lt(ExpressionOps):
+    """Less Than Operator with automatic index alignment
+    
+    修复原版 Lt 操作符的索引不一致问题：自动对齐两个序列的索引
+    """
+    from qlib.data.base import Expression
+    
+    def __init__(self, feature_left, feature_right):
+        self.feature_left = feature_left
+        self.feature_right = feature_right
+    
+    def __str__(self):
+        return "Lt({},{})".format(self.feature_left, self.feature_right)
+    
+    def _load_internal(self, instrument, start_index, end_index, *args):
+        from qlib.data.base import Expression
+        
+        # 加载两个序列
+        if isinstance(self.feature_left, (Expression,)):
+            series_left = self.feature_left.load(instrument, start_index, end_index, *args)
+        else:
+            series_left = self.feature_left
+        if isinstance(self.feature_right, (Expression,)):
+            series_right = self.feature_right.load(instrument, start_index, end_index, *args)
+        else:
+            series_right = self.feature_right
+        
+        # 对齐索引
+        if series_left is None or not isinstance(series_left, pd.Series) or len(series_left) == 0:
+            if series_right is not None and isinstance(series_right, pd.Series) and len(series_right) > 0:
+                series_left = pd.Series(np.nan, index=series_right.index)
+            else:
+                return pd.Series(dtype='bool')
+        
+        if series_right is None or not isinstance(series_right, pd.Series) or len(series_right) == 0:
+            if series_left is not None and isinstance(series_left, pd.Series) and len(series_left) > 0:
+                series_right = pd.Series(np.nan, index=series_left.index)
+            else:
+                return pd.Series(dtype='bool')
+        
+        # 处理标量值
+        if not isinstance(series_left, pd.Series):
+            if isinstance(series_right, pd.Series) and len(series_right) > 0:
+                series_left = pd.Series([float(series_left)] * len(series_right), index=series_right.index)
+            else:
+                return pd.Series(dtype='bool')
+        
+        if not isinstance(series_right, pd.Series):
+            if isinstance(series_left, pd.Series) and len(series_left) > 0:
+                series_right = pd.Series([float(series_right)] * len(series_left), index=series_left.index)
+            else:
+                return pd.Series(dtype='bool')
+        
+        # 对齐到两个索引的交集
+        common_index = series_left.index.intersection(series_right.index)
+        if len(common_index) == 0:
+            return pd.Series(dtype='bool')
+        
+        series_left = series_left.reindex(common_index, fill_value=np.nan)
+        series_right = series_right.reindex(common_index, fill_value=np.nan)
+        
+        # 执行比较
+        return pd.Series(series_left < series_right, index=common_index)
+    
+    def get_longest_back_rolling(self):
+        from qlib.data.base import Expression
+        left_br = self.feature_left.get_longest_back_rolling() if isinstance(self.feature_left, (Expression,)) else 0
+        right_br = self.feature_right.get_longest_back_rolling() if isinstance(self.feature_right, (Expression,)) else 0
+        return max(left_br, right_br)
+    
+    def get_extended_window_size(self):
+        from qlib.data.base import Expression
+        if isinstance(self.feature_left, (Expression,)):
+            left_l, left_r = self.feature_left.get_extended_window_size()
+        else:
+            left_l, left_r = 0, 0
+        if isinstance(self.feature_right, (Expression,)):
+            right_l, right_r = self.feature_right.get_extended_window_size()
+        else:
+            right_l, right_r = 0, 0
+        return max(left_l, right_l), max(left_r, right_r)
+    
+    def load(self, instrument, start_index, end_index, freq):
+        return self._load_internal(instrument, start_index, end_index, freq)
+
+
+class If(ExpressionOps):
+    """If Operator with automatic index alignment
+    
+    修复原版 If 操作符的索引不一致问题：自动对齐三个序列的索引到条件的索引
+    确保即使原始索引略有不同，也能正常工作
+    这个类会覆盖 Qlib 默认的 If 操作符
+    """
+    from qlib.data.base import Expression
+    
+    def __init__(self, condition, feature_left, feature_right):
+        self.condition = condition
+        self.feature_left = feature_left
+        self.feature_right = feature_right
+    
+    def __str__(self):
+        return "If({},{},{})".format(self.condition, self.feature_left, self.feature_right)
+    
+    def _load_internal(self, instrument, start_index, end_index, *args):
+        from qlib.data.base import Expression
+        
+        # 加载三个序列
+        series_cond = self.condition.load(instrument, start_index, end_index, *args)
+        if isinstance(self.feature_left, (Expression,)):
+            series_left = self.feature_left.load(instrument, start_index, end_index, *args)
+        else:
+            series_left = self.feature_left
+        if isinstance(self.feature_right, (Expression,)):
+            series_right = self.feature_right.load(instrument, start_index, end_index, *args)
+        else:
+            series_right = self.feature_right
+        
+        # 先处理 series_cond 为空的情况
+        if series_cond is None or not isinstance(series_cond, pd.Series) or len(series_cond) == 0:
+            return pd.Series(dtype='float64')
+        
+        target_index = series_cond.index
+        
+        # 处理 series_left：确保是 Series 且有正确的索引
+        if series_left is None:
+            series_left = pd.Series(np.nan, index=target_index)
+        elif not isinstance(series_left, pd.Series):
+            # 标量值，转换为Series
+            series_left = pd.Series([float(series_left)] * len(target_index), index=target_index)
+        elif len(series_left) == 0:
+            # 空序列
+            series_left = pd.Series(np.nan, index=target_index)
+        else:
+            # 非空序列，对齐索引
+            series_left = series_left.reindex(target_index, fill_value=np.nan)
+        
+        # 处理 series_right：确保是 Series 且有正确的索引
+        if series_right is None:
+            series_right = pd.Series(np.nan, index=target_index)
+        elif not isinstance(series_right, pd.Series):
+            # 标量值，转换为Series
+            series_right = pd.Series([float(series_right)] * len(target_index), index=target_index)
+        elif len(series_right) == 0:
+            # 空序列
+            series_right = pd.Series(np.nan, index=target_index)
+        else:
+            # 非空序列，对齐索引
+            series_right = series_right.reindex(target_index, fill_value=np.nan)
+        
+        # 现在三个序列都有相同的索引和长度，可以安全使用 np.where
+        try:
+            series = pd.Series(np.where(series_cond, series_left, series_right), index=target_index)
+        except Exception as e:
+            # 如果还有问题，提供更详细的错误信息
+            raise ValueError(
+                f"If operator failed: cond shape={series_cond.shape if hasattr(series_cond, 'shape') else 'N/A'}, "
+                f"left shape={series_left.shape if hasattr(series_left, 'shape') else 'N/A'}, "
+                f"right shape={series_right.shape if hasattr(series_right, 'shape') else 'N/A'}, "
+                f"error={e}"
+            ) from e
+        
+        return series
+    
+    def get_longest_back_rolling(self):
+        from qlib.data.base import Expression
+        if isinstance(self.feature_left, (Expression,)):
+            left_br = self.feature_left.get_longest_back_rolling()
+        else:
+            left_br = 0
+        if isinstance(self.feature_right, (Expression,)):
+            right_br = self.feature_right.get_longest_back_rolling()
+        else:
+            right_br = 0
+        if isinstance(self.condition, (Expression,)):
+            c_br = self.condition.get_longest_back_rolling()
+        else:
+            c_br = 0
+        return max(left_br, right_br, c_br)
+    
+    def get_extended_window_size(self):
+        from qlib.data.base import Expression
+        if isinstance(self.feature_left, (Expression,)):
+            left_l, left_r = self.feature_left.get_extended_window_size()
+        else:
+            left_l, left_r = 0, 0
+        if isinstance(self.feature_right, (Expression,)):
+            right_l, right_r = self.feature_right.get_extended_window_size()
+        else:
+            right_l, right_r = 0, 0
+        if isinstance(self.condition, (Expression,)):
+            cond_l, cond_r = self.condition.get_extended_window_size()
+        else:
+            cond_l, cond_r = 0, 0
+        return max(left_l, right_l, cond_l), max(left_r, right_r, cond_r)
+    
+    def load(self, instrument, start_index, end_index, freq):
+        return self._load_internal(instrument, start_index, end_index, freq)

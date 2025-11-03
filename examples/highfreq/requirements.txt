@@ -1,0 +1,8 @@
+# 高频交易系统依赖包
+schedule>=1.2.0
+qlib>=0.9.0
+pandas>=1.5.0
+numpy>=1.21.0
+matplotlib>=3.5.0
+lightgbm>=3.3.0
+scikit-learn>=1.1.0
