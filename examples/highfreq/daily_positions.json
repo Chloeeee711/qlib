@@ -1,0 +1,354 @@
+{
+  "2025-09-29": [
+    {
+      "stock": "SZ301182",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 1.0,
+      "buy_time": "2025-10-28T14:18:25.000767"
+    },
+    {
+      "stock": "SZ300237",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9957894736842106,
+      "buy_time": "2025-10-28T14:18:25.000787"
+    },
+    {
+      "stock": "SZ300368",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9957894736842106,
+      "buy_time": "2025-10-28T14:18:25.000791"
+    },
+    {
+      "stock": "SZ300789",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9915789473684211,
+      "buy_time": "2025-10-28T14:18:25.000794"
+    },
+    {
+      "stock": "SH603286",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9873684210526317,
+      "buy_time": "2025-10-28T14:18:25.000797"
+    },
+    {
+      "stock": "SZ000892",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.983157894736842,
+      "buy_time": "2025-10-28T14:18:25.000799"
+    },
+    {
+      "stock": "SH688717",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9789473684210526,
+      "buy_time": "2025-10-28T14:18:25.000802"
+    },
+    {
+      "stock": "SH688577",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9747368421052631,
+      "buy_time": "2025-10-28T14:18:25.000804"
+    },
+    {
+      "stock": "SZ002298",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9747368421052631,
+      "buy_time": "2025-10-28T14:18:25.000807"
+    },
+    {
+      "stock": "SZ002837",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9684210526315788,
+      "buy_time": "2025-10-28T14:18:25.000809"
+    },
+    {
+      "stock": "SZ002851",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9684210526315788,
+      "buy_time": "2025-10-28T14:18:25.000811"
+    },
+    {
+      "stock": "SH688679",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9621052631578948,
+      "buy_time": "2025-10-28T14:18:25.000813"
+    },
+    {
+      "stock": "SZ301550",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9621052631578948,
+      "buy_time": "2025-10-28T14:18:25.000816"
+    },
+    {
+      "stock": "SZ301150",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9578947368421054,
+      "buy_time": "2025-10-28T14:18:25.000818"
+    },
+    {
+      "stock": "SZ002664",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9536842105263157,
+      "buy_time": "2025-10-28T14:18:25.000820"
+    },
+    {
+      "stock": "SZ300486",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9536842105263157,
+      "buy_time": "2025-10-28T14:18:25.000822"
+    },
+    {
+      "stock": "SH603686",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9494736842105262,
+      "buy_time": "2025-10-28T14:18:25.000825"
+    },
+    {
+      "stock": "SZ300593",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9494736842105262,
+      "buy_time": "2025-10-28T14:18:25.000827"
+    },
+    {
+      "stock": "SH688228",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9452631578947368,
+      "buy_time": "2025-10-28T14:18:25.000830"
+    },
+    {
+      "stock": "SH688108",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9410526315789474,
+      "buy_time": "2025-10-28T14:18:25.000832"
+    },
+    {
+      "stock": "SH688379",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9368421052631579,
+      "buy_time": "2025-10-28T14:18:25.000834"
+    },
+    {
+      "stock": "SZ301413",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9326315789473685,
+      "buy_time": "2025-10-28T14:18:25.000836"
+    },
+    {
+      "stock": "SH688260",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.928421052631579,
+      "buy_time": "2025-10-28T14:18:25.000838"
+    },
+    {
+      "stock": "SH688171",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9263157894736842,
+      "buy_time": "2025-10-28T14:18:25.000840"
+    },
+    {
+      "stock": "SZ300963",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9263157894736842,
+      "buy_time": "2025-10-28T14:18:25.000843"
+    },
+    {
+      "stock": "SZ002126",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9221052631578948,
+      "buy_time": "2025-10-28T14:18:25.000845"
+    },
+    {
+      "stock": "SZ301397",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9221052631578948,
+      "buy_time": "2025-10-28T14:18:25.000848"
+    },
+    {
+      "stock": "SH603316",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9157894736842105,
+      "buy_time": "2025-10-28T14:18:25.000850"
+    },
+    {
+      "stock": "SH688627",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9157894736842105,
+      "buy_time": "2025-10-28T14:18:25.000852"
+    },
+    {
+      "stock": "SH688071",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9052631578947368,
+      "buy_time": "2025-10-28T14:18:25.000854"
+    },
+    {
+      "stock": "SZ300499",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9052631578947368,
+      "buy_time": "2025-10-28T14:18:25.000856"
+    },
+    {
+      "stock": "SZ300839",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9052631578947368,
+      "buy_time": "2025-10-28T14:18:25.000859"
+    },
+    {
+      "stock": "SZ300870",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.9052631578947368,
+      "buy_time": "2025-10-28T14:18:25.000861"
+    },
+    {
+      "stock": "SH688110",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.894736842105263,
+      "buy_time": "2025-10-28T14:18:25.000863"
+    },
+    {
+      "stock": "SH688698",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8905263157894736,
+      "buy_time": "2025-10-28T14:18:25.000865"
+    },
+    {
+      "stock": "SZ002427",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8905263157894736,
+      "buy_time": "2025-10-28T14:18:25.000867"
+    },
+    {
+      "stock": "SH688499",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8863157894736842,
+      "buy_time": "2025-10-28T14:18:25.000870"
+    },
+    {
+      "stock": "SZ001309",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8778947368421053,
+      "buy_time": "2025-10-28T14:18:25.000873"
+    },
+    {
+      "stock": "SZ300475",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8778947368421053,
+      "buy_time": "2025-10-28T14:18:25.000875"
+    },
+    {
+      "stock": "SZ301002",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8778947368421053,
+      "buy_time": "2025-10-28T14:18:25.000877"
+    },
+    {
+      "stock": "SZ300344",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8736842105263158,
+      "buy_time": "2025-10-28T14:18:25.000879"
+    },
+    {
+      "stock": "SZ300395",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8673684210526316,
+      "buy_time": "2025-10-28T14:18:25.000881"
+    },
+    {
+      "stock": "SZ300990",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8673684210526316,
+      "buy_time": "2025-10-28T14:18:25.000883"
+    },
+    {
+      "stock": "SZ002052",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8652631578947367,
+      "buy_time": "2025-10-28T14:18:25.000885"
+    },
+    {
+      "stock": "SH688319",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8610526315789473,
+      "buy_time": "2025-10-28T14:18:25.000888"
+    },
+    {
+      "stock": "SZ002094",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8568421052631578,
+      "buy_time": "2025-10-28T14:18:25.000890"
+    },
+    {
+      "stock": "SZ301052",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8526315789473684,
+      "buy_time": "2025-10-28T14:18:25.000892"
+    },
+    {
+      "stock": "SH688215",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8463157894736841,
+      "buy_time": "2025-10-28T14:18:25.000894"
+    },
+    {
+      "stock": "SH688648",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8463157894736841,
+      "buy_time": "2025-10-28T14:18:25.000896"
+    },
+    {
+      "stock": "SZ002915",
+      "shares": 200,
+      "buy_price": 10.0,
+      "signal_score": 0.8463157894736841,
+      "buy_time": "2025-10-28T14:18:25.000898"
+    }
+  ]
+}
