@@ -6,7 +6,7 @@
 import pandas as pd
 import schedule
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from pathlib import Path
 import smtplib
 import ssl
@@ -22,6 +22,9 @@ import matplotlib.pyplot as plt
 import io
 import base64
 
+# 工作目录
+WORKDIR = "/home/intern0/qlib/examples/highfreq"
+
 class EmailSender:
     _qlib_initialized = False  # 类级别标志，避免重复初始化
     
@@ -36,10 +39,13 @@ class EmailSender:
         # 抄送列表
         self.CC_LIST = ['chloechen@xcquant.com']
         
-        # 文件路径
-        self.CSV_FILE = Path("daily_predictions.csv")
-        self.POSITIONS_FILE = Path("positions.json")  # 持仓记录文件
-        self.PNL_HISTORY_FILE = Path("daily_pnl_history.csv")  # 历史盈亏记录文件
+        # 文件路径（使用工作目录）
+        self.WORKDIR = WORKDIR
+        self.CSV_FILE = Path(WORKDIR) / "daily_predictions.csv"
+        self.POSITIONS_FILE = Path(WORKDIR) / "positions.json"  # 持仓记录文件
+        self.PNL_HISTORY_FILE = Path(WORKDIR) / "daily_pnl_history.csv"  # 历史盈亏记录文件
+        # 实时数据路径
+        self.KQ_DATA_DIR = "/home/intern0/qlib_data_recent"
         
         # 模型和标准化参数（延迟加载）
         self.model = None
@@ -50,41 +56,99 @@ class EmailSender:
         print(f"[INFO] CSV文件: {self.CSV_FILE}")
         print(f"[INFO] 持仓文件: {self.POSITIONS_FILE}")
     
-    def read_signal_csv(self):
-        """读取信号CSV文件（带真实性校验：当日且非空）"""
+    def _ensure_qlib_initialized(self):
+        """确保qlib只初始化一次"""
+        if EmailSender._qlib_initialized:
+            return True
+        try:
+            import qlib
+            from qlib.constant import REG_CN
+            # 尝试多个数据路径
+            data_paths = [
+                "/home/intern0/qlib_data_ipynb",
+                "/home/intern0/qlib_data_recent",
+                "/home/intern0/qlib_data",
+            ]
+            for data_path in data_paths:
+                try:
+                    qlib.init(provider_uri=data_path, region=REG_CN)
+                    EmailSender._qlib_initialized = True
+                    print(f"[INFO] Qlib已初始化（email_sender），使用数据路径: {data_path}")
+                    return True
+                except Exception as e:
+                    print(f"[WARN] 尝试路径 {data_path} 失败: {e}")
+                    continue
+            print("[WARN] 所有数据路径都初始化失败")
+            return False
+        except Exception as e:
+            print(f"[WARN] Qlib初始化失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def read_signal_csv(self, target_date=None):
+        """读取信号CSV文件（带真实性校验：当日且非空）
+        
+        参数:
+            target_date: 目标日期，默认为None（使用今天）
+        """
         try:
             if not self.CSV_FILE.exists():
                 print(f"[WARN] CSV文件不存在: {self.CSV_FILE}")
                 return None
-            # 校验文件修改时间为今日
+            
+            if target_date is None:
+                target_date = datetime.now().date()
+            elif isinstance(target_date, str):
+                target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+            
+            # 校验文件修改时间为目标日期（放宽检查，允许1天误差）
             mtime = datetime.fromtimestamp(self.CSV_FILE.stat().st_mtime)
-            today = datetime.now().date()
-            if mtime.date() != today:
+            if abs((mtime.date() - target_date).days) > 1:
                 print(f"[WARN] CSV非当日生成，mtime={mtime}")
                 return None
             df = pd.read_csv(self.CSV_FILE)
             if df is None or len(df) == 0:
                 print(f"[WARN] CSV为空: {self.CSV_FILE}")
                 return None
-            # 如果有timestamp列，校验为今日
+            # 如果有timestamp列，校验为目标日期
             if 'timestamp' in df.columns:
                 try:
                     ts0 = pd.to_datetime(df['timestamp'].iloc[0])
-                    if ts0.date() != today:
-                        print(f"[WARN] CSV时间戳非当日: {ts0}")
-                        return None
+                    if ts0.date() != target_date:
+                        print(f"[WARN] CSV时间戳非目标日期 {target_date}: {ts0.date()}")
+                        # 放宽检查：允许使用目标日期的数据
+                        df_filtered = df[pd.to_datetime(df['timestamp']).dt.date == target_date]
+                        if len(df_filtered) > 0:
+                            df = df_filtered
+                            print(f"[INFO] 已过滤为 {target_date} 的数据: {len(df)} 条")
+                        else:
+                            print(f"[WARN] 未找到 {target_date} 的数据")
+                            return None
                 except Exception:
                     pass
-            print(f"[OK] 读取信号成功: {len(df)} 条 (mtime={mtime})")
+            print(f"[OK] 读取信号成功: {len(df)} 条 (目标日期={target_date}, mtime={mtime})")
             return df
         except Exception as e:
             print(f"[ERROR] 读取CSV失败: {e}")
             return None
     
-    def save_positions(self, df):
-        """保存持仓信息（买入时调用）"""
+    def save_positions(self, df, buy_date=None):
+        """保存持仓信息（买入时调用）
+        
+        参数:
+            df: 买入信号DataFrame
+            buy_date: 买入日期，格式 'YYYY-MM-DD'，默认为None（使用今天）
+        """
         try:
-            buy_date = datetime.now().strftime('%Y-%m-%d')
+            if buy_date is None:
+                buy_date = datetime.now().strftime('%Y-%m-%d')
+            elif isinstance(buy_date, (datetime, date)):
+                buy_date = buy_date.strftime('%Y-%m-%d')
+            elif isinstance(buy_date, str):
+                pass  # 已经是字符串格式
+            else:
+                buy_date = str(buy_date)
             
             positions = {}
             for _, row in df.iterrows():
@@ -133,30 +197,76 @@ class EmailSender:
         
         try:
             from qlib.workflow import R
-            # 尝试从预测recorder加载
+            from pathlib import Path
+            import pickle
+            
+            # 首先尝试从当前recorder加载
             try:
-                R.start(experiment_name="HF_ROLLING_POOL_500", recorder_name="prediction")
                 recorder = R.get_recorder()
-                self.model = recorder.load_object("model")
-                self.norm_params = recorder.load_object("norm_params")
-                R.end_exp(recorder_status="FINISHED")
-                print(f"✅ 从预测recorder加载模型和标准化参数成功")
-                self._model_loaded = True
-                return True
-            except Exception:
-                # 尝试从其他recorder加载
-                try:
-                    recorder = R.get_recorder()
+                if recorder is not None:
                     self.model = recorder.load_object("model")
                     self.norm_params = recorder.load_object("norm_params")
                     print(f"✅ 从当前recorder加载模型和标准化参数成功")
                     self._model_loaded = True
                     return True
-                except Exception as e:
-                    print(f"[WARN] 从recorder加载失败: {e}")
-                    return False
+            except:
+                pass
+            
+            # 如果当前recorder不存在，查找最新的experiment和run
+            mlruns_dir = Path(self.WORKDIR) / "mlruns"
+            if not mlruns_dir.exists():
+                mlruns_dir = Path("mlruns")  # 尝试当前目录
+            
+            if mlruns_dir.exists():
+                # 查找所有experiment目录
+                exp_dirs = sorted([d for d in mlruns_dir.iterdir() if d.is_dir() and d.name.isdigit()], 
+                                key=lambda x: x.stat().st_mtime, reverse=True)
+                
+                for exp_dir in exp_dirs[:5]:  # 只检查最近5个experiment
+                    run_dirs = sorted([d for d in exp_dir.iterdir() if d.is_dir()], 
+                                    key=lambda x: x.stat().st_mtime, reverse=True)
+                    
+                    for run_dir in run_dirs[:3]:  # 每个experiment检查最近3个run
+                        try:
+                            recorder_path = run_dir / "artifacts" / "recorder"
+                            if not recorder_path.exists():
+                                continue
+                            
+                            # 尝试加载模型
+                            model_path = recorder_path / "model.pkl"
+                            norm_params_path = recorder_path / "norm_params.pkl"
+                            
+                            if model_path.exists():
+                                with open(model_path, 'rb') as f:
+                                    self.model = pickle.load(f)
+                                
+                                # 尝试加载标准化参数
+                                if norm_params_path.exists():
+                                    with open(norm_params_path, 'rb') as f:
+                                        self.norm_params = pickle.load(f)
+                                else:
+                                    # 尝试其他可能的名称
+                                    for key in ("highfreq_norm", "processor_state", "highfreq_norm_params"):
+                                        alt_path = recorder_path / f"{key}.pkl"
+                                        if alt_path.exists():
+                                            with open(alt_path, 'rb') as f:
+                                                self.norm_params = pickle.load(f)
+                                            break
+                                
+                                print(f"✅ 从最新recorder加载模型成功: {run_dir.name}")
+                                if self.norm_params:
+                                    print(f"✅ 标准化参数已加载")
+                                self._model_loaded = True
+                                return True
+                        except Exception as e:
+                            continue
+            
+            print(f"[WARN] 无法从recorder加载模型，可能需要先训练模型")
+            return False
         except Exception as e:
             print(f"[ERROR] 加载模型失败: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _predict_realtime_signal(self, code, pred_time_str=None):
@@ -166,17 +276,15 @@ class EmailSender:
         """
         try:
             # 确保qlib已初始化
-            if not EmailSender._qlib_initialized:
-                try:
-                    import qlib
-                    from qlib.constant import REG_CN
-                    qlib.init(provider_uri="E:/qlib_data_ipynb", region=REG_CN)
-                    EmailSender._qlib_initialized = True
-                    print("[INFO] Qlib已初始化（用于实时预测）")
-                except Exception as e:
-                    print(f"[WARN] Qlib初始化失败: {e}")
-            
-            from qlib.data import D
+            if not EmailSender._qlib_initialized and not self._ensure_qlib_initialized():
+                print("[WARN] Qlib初始化失败，无法实时预测")
+                return None
+
+            try:
+                from qlib.data import D
+            except ImportError as e:
+                print(f"[ERROR] 导入qlib失败: {e}")
+                return None
             
             # 如果没有加载模型，先加载
             if not self._load_model_and_params():
@@ -335,7 +443,7 @@ class EmailSender:
                 folder_code = 'SZ' + up[2:]
             # 其余情况直接用大写
 
-            folder = Path("E:/qlib_data_recent/features") / folder_code
+            folder = Path(self.KQ_DATA_DIR) / "features" / folder_code
             csv_file = folder / "data.csv"
             if not csv_file.exists():
                 print(f"[WARN] {folder_code} data.csv不存在 ({csv_file})")
@@ -474,16 +582,31 @@ class EmailSender:
         return html
     
     def save_daily_pnl(self, daily_pnl, total_principal, total_cost, total_stamp_tax, win_count, loss_count):
-        """保存每日盈亏记录（追加模式，不覆盖）"""
+        """保存每日盈亏记录（追加模式，不覆盖）
+        
+        注意：只保存2025-11-28及之后的数据（最新模型训练结果）
+        """
         try:
             today = datetime.now().strftime('%Y-%m-%d')
+            today_dt = pd.to_datetime(today)
+            start_date = pd.to_datetime('2025-11-28')
+            
+            # 如果今天早于2025-11-28，不保存
+            if today_dt < start_date:
+                print(f"[WARN] 日期 {today} 早于2025-11-28，不保存历史记录（只记录最新模型结果）")
+                return 0
             
             # 读取历史记录
             if self.PNL_HISTORY_FILE.exists():
                 history_df = pd.read_csv(self.PNL_HISTORY_FILE)
                 # 检查今天是否已有记录
                 if len(history_df) > 0 and 'date' in history_df.columns:
-                    history_df['date'] = pd.to_datetime(history_df['date']).dt.strftime('%Y-%m-%d')
+                    history_df['date'] = pd.to_datetime(history_df['date'])
+                    # 只保留2025-11-28及之后的数据
+                    history_df = history_df[history_df['date'] >= start_date]
+                    history_df = history_df.sort_values('date')
+                    history_df['date'] = history_df['date'].dt.strftime('%Y-%m-%d')
+                    
                     if today in history_df['date'].values:
                         # 更新今天的记录
                         history_df.loc[history_df['date'] == today, 'daily_pnl'] = daily_pnl
@@ -496,7 +619,7 @@ class EmailSender:
                         history_df['total_pnl'] = history_df['daily_pnl'].cumsum()
                     else:
                         # 追加新记录
-                        last_total_pnl = history_df['total_pnl'].iloc[-1] if 'total_pnl' in history_df.columns else 0
+                        last_total_pnl = history_df['total_pnl'].iloc[-1] if 'total_pnl' in history_df.columns and len(history_df) > 0 else 0
                         new_row = {
                             'date': today,
                             'daily_pnl': daily_pnl,
@@ -559,6 +682,291 @@ class EmailSender:
         except Exception as e:
             print(f"[WARN] 读取历史盈亏失败: {e}")
             return 0
+
+    def _load_benchmark_from_history(self, df, initial_capital):
+        """如果历史盈亏文件包含benchmark字段，则直接使用"""
+        try:
+            if 'benchmark_cumulative' in df.columns:
+                series = pd.Series(df['benchmark_cumulative'].astype(float).values, index=df['date'])
+                print("[INFO] 使用历史文件中的benchmark累计收益")
+                return series
+            if 'benchmark_return' in df.columns:
+                returns = pd.Series(df['benchmark_return'].astype(float).fillna(0).values, index=df['date'])
+                bench_series = ((1 + returns).cumprod() - 1) * initial_capital
+                print("[INFO] 使用历史文件中的benchmark收益率")
+                return bench_series
+        except Exception as e:
+            print(f"[WARN] 从历史盈亏文件读取benchmark失败: {e}")
+        return None
+
+    def _load_benchmark_from_recorder(self, df, initial_capital):
+        """尝试从最近的recorder报告中提取等权隔夜收益benchmark"""
+        try:
+            mlruns_dir = Path(self.WORKDIR) / "mlruns"
+            if not mlruns_dir.exists():
+                mlruns_dir = Path("mlruns")
+            if not mlruns_dir.exists():
+                print("[WARN] mlruns目录不存在，无法从recorder加载benchmark")
+                return None
+
+            import pickle
+
+            exp_dirs = sorted(
+                [d for d in mlruns_dir.iterdir() if d.is_dir() and d.name.isdigit()],
+                key=lambda x: x.stat().st_mtime,
+                reverse=True,
+            )
+
+            for exp_dir in exp_dirs[:5]:
+                run_dirs = sorted(
+                    [d for d in exp_dir.iterdir() if d.is_dir()],
+                    key=lambda x: x.stat().st_mtime,
+                    reverse=True,
+                )
+                for run_dir in run_dirs[:3]:
+                    try:
+                        report_path = run_dir / "artifacts" / "recorder" / "portfolio_analysis" / "report_normal_1min.pkl"
+                        if not report_path.exists():
+                            continue
+                        with open(report_path, "rb") as f:
+                            report = pickle.load(f)
+                        if "bench" not in report.columns:
+                            continue
+                        
+                        # 从分钟级benchmark数据中提取日频数据
+                        bench_returns = report["bench"]
+                        
+                        # 将分钟级数据转换为日频：每天只取10:46时刻的数据（等权隔夜收益benchmark的特点）
+                        bench_df = pd.DataFrame({
+                            "datetime": bench_returns.index,
+                            "bench_return": bench_returns.values
+                        })
+                        bench_df["datetime"] = pd.to_datetime(bench_df["datetime"])
+                        bench_df["date"] = bench_df["datetime"].dt.normalize()
+                        bench_df["hour"] = bench_df["datetime"].dt.hour
+                        bench_df["minute"] = bench_df["datetime"].dt.minute
+                        
+                        # 只取10:46时刻的数据（等权隔夜收益benchmark在10:46记入）
+                        bench_1046 = bench_df[(bench_df["hour"] == 10) & (bench_df["minute"] == 46)].copy()
+                        if bench_1046.empty:
+                            # 如果没有10:46数据，使用每天的平均值
+                            daily_bench = bench_df.groupby("date")["bench_return"].mean()
+                        else:
+                            daily_bench = bench_1046.groupby("date")["bench_return"].first()
+                        
+                        # 过滤掉全为0的日期（非交易日）
+                        daily_bench = daily_bench[daily_bench != 0]
+                        if daily_bench.empty:
+                            continue
+                        
+                        # 计算累计收益
+                        bench_series = ((1 + daily_bench).cumprod() - 1) * initial_capital
+                        bench_series.index = pd.to_datetime(bench_series.index)
+                        
+                        # 对齐到目标日期
+                        target_index = pd.to_datetime(df["date"])
+                        aligned = bench_series.reindex(target_index, method="ffill").fillna(method="bfill")
+                        if aligned.isna().all():
+                            continue
+                        
+                        print(f"[INFO] ✅ 从recorder {run_dir.name} 载入等权隔夜收益benchmark数据（{len(bench_series)}天）")
+                        return pd.Series(aligned.values, index=df["date"])
+                    except Exception as inner_e:
+                        print(f"[WARN] 解析{run_dir} benchmark失败: {inner_e}")
+                        continue
+            print("[WARN] 未在recorder中找到可用的benchmark数据")
+        except Exception as e:
+            print(f"[WARN] 从recorder加载benchmark失败: {e}")
+        return None
+
+    def _calculate_equal_weight_overnight_benchmark(self, df, initial_capital):
+        """计算等权隔夜收益benchmark（从CSV文件直接读取）"""
+        try:
+            import numpy as np
+            from datetime import timedelta
+            from pathlib import Path
+            
+            # 数据路径
+            data_dir = Path("/home/intern0/qlib_data_recent/features")
+            if not data_dir.exists():
+                print(f"[WARN] 数据目录不存在: {data_dir}")
+                return None
+            
+            # 获取股票池（从positions.json或CSV文件）
+            stock_codes = []
+            
+            # 方法1：从positions.json获取
+            positions = self.load_positions()
+            if positions:
+                stock_codes = list(positions.keys())
+                print(f"[INFO] 从positions.json获取股票池: {len(stock_codes)} 支")
+            
+            # 方法2：如果positions为空，尝试从CSV文件获取
+            if not stock_codes and self.CSV_FILE.exists():
+                try:
+                    df_csv = pd.read_csv(self.CSV_FILE)
+                    if 'code' in df_csv.columns:
+                        stock_codes = df_csv['code'].unique().tolist()
+                        print(f"[INFO] 从CSV文件获取股票池: {len(stock_codes)} 支")
+                except:
+                    pass
+            
+            if not stock_codes:
+                print("[WARN] 无法获取股票池，无法计算等权隔夜收益benchmark")
+                return None
+            
+            # 限制股票数量（避免计算太慢）
+            if len(stock_codes) > 500:
+                stock_codes = stock_codes[:500]
+                print(f"[INFO] 限制股票池为前500支")
+            
+            # 获取日期范围（只处理交易日）
+            min_date = df["date"].min()
+            max_date = df["date"].max()
+            
+            # 只处理交易日（排除周末）
+            def is_trading_day(date_obj):
+                """判断是否为交易日（排除周末）"""
+                weekday = date_obj.weekday()  # 0=Monday, 6=Sunday
+                return weekday < 5  # 周一到周五
+            
+            def get_previous_trading_day(date_obj):
+                """获取前一个交易日（排除周末）"""
+                prev_date = date_obj - timedelta(days=1)
+                while not is_trading_day(prev_date):
+                    prev_date = prev_date - timedelta(days=1)
+                return prev_date
+            
+            # 只处理交易日
+            all_dates = pd.date_range(start=min_date, end=max_date, freq='D')
+            target_dates = [d for d in all_dates if is_trading_day(d)]
+            
+            print(f"[INFO] 计算等权隔夜收益benchmark: {min_date} ~ {max_date}, {len(stock_codes)} 支股票")
+            print(f"[INFO] 交易日数量: {len(target_dates)}")
+            
+            # 存储每日的等权隔夜收益
+            daily_bench_returns = {}
+            
+            # 对每个目标日期，计算等权隔夜收益
+            for target_date in target_dates:
+                target_date_str = target_date.strftime("%Y-%m-%d")
+                # 获取前一个交易日（排除周末）
+                prev_date = get_previous_trading_day(target_date)
+                prev_date_str = prev_date.strftime("%Y-%m-%d")
+                
+                print(f"[DEBUG] {target_date_str} 的前一个交易日: {prev_date_str}")
+                
+                stock_returns = []
+                
+                # 对每只股票计算隔夜收益
+                for code in stock_codes:
+                    try:
+                        csv_path = data_dir / code / "data.csv"
+                        if not csv_path.exists():
+                            continue
+                        
+                        # 读取CSV文件
+                        df_stock = pd.read_csv(csv_path)
+                        df_stock['datetime'] = pd.to_datetime(df_stock['datetime'])
+                        df_stock['date'] = df_stock['datetime'].dt.date
+                        
+                        # 获取前一天和当天的数据
+                        prev_data = df_stock[df_stock['date'] == prev_date.date()]
+                        curr_data = df_stock[df_stock['date'] == target_date.date()]
+                        
+                        if prev_data.empty or curr_data.empty:
+                            continue
+                        
+                        # 计算前一天14:41-14:50的VWAP
+                        prev_afternoon = prev_data[
+                            (prev_data['datetime'].dt.hour == 14) & 
+                            (prev_data['datetime'].dt.minute >= 41) & 
+                            (prev_data['datetime'].dt.minute < 50)
+                        ]
+                        if prev_afternoon.empty:
+                            continue
+                        
+                        tp_prev = (prev_afternoon['open'] + prev_afternoon['high'] + 
+                                  prev_afternoon['low'] + prev_afternoon['close']) / 4.0
+                        vol_prev = prev_afternoon['volume']
+                        afternoon_vwap = (tp_prev * vol_prev).sum() / vol_prev.sum() if vol_prev.sum() > 0 else None
+                        
+                        if afternoon_vwap is None or afternoon_vwap <= 0:
+                            continue
+                        
+                        # 计算当天10:11-10:20的VWAP
+                        curr_morning = curr_data[
+                            (curr_data['datetime'].dt.hour == 10) & 
+                            (curr_data['datetime'].dt.minute >= 11) & 
+                            (curr_data['datetime'].dt.minute < 20)
+                        ]
+                        if curr_morning.empty:
+                            continue
+                        
+                        tp_curr = (curr_morning['open'] + curr_morning['high'] + 
+                                   curr_morning['low'] + curr_morning['close']) / 4.0
+                        vol_curr = curr_morning['volume']
+                        morning_vwap = (tp_curr * vol_curr).sum() / vol_curr.sum() if vol_curr.sum() > 0 else None
+                        
+                        if morning_vwap is None or morning_vwap <= 0:
+                            continue
+                        
+                        # 计算隔夜收益
+                        overnight_return = (morning_vwap / afternoon_vwap) - 1.0
+                        stock_returns.append(overnight_return)
+                        
+                    except Exception as e:
+                        continue
+                
+                # 计算等权平均（只对有效数据）
+                if stock_returns:
+                    equal_weight_return = np.mean(stock_returns)
+                    daily_bench_returns[target_date_str] = equal_weight_return
+                    print(f"[INFO] {target_date_str}: {len(stock_returns)} 支股票，等权隔夜收益: {equal_weight_return:.6f}")
+            
+            if not daily_bench_returns:
+                print("[WARN] 没有成功计算任何日期的等权隔夜收益")
+                return None
+            
+            # 转换为Series并计算累计收益
+            bench_returns_series = pd.Series(daily_bench_returns)
+            bench_returns_series.index = pd.to_datetime(bench_returns_series.index)
+            
+            # 对异常值进行裁剪（1%和99%分位数）
+            if len(bench_returns_series) > 0:
+                lower_bound = bench_returns_series.quantile(0.01)
+                upper_bound = bench_returns_series.quantile(0.99)
+                bench_returns_series = bench_returns_series.clip(lower=lower_bound, upper=upper_bound)
+            
+            # 计算累计收益
+            bench_series = ((1 + bench_returns_series).cumprod() - 1) * initial_capital
+            
+            # 对齐到目标日期
+            target_index = pd.to_datetime(df["date"])
+            aligned = bench_series.reindex(target_index, method="ffill").bfill()
+            if aligned.isna().all():
+                return None
+            
+            print(f"[INFO] ✅ 成功计算等权隔夜收益benchmark（{len(bench_series)}天）")
+            return pd.Series(aligned.values, index=df["date"])
+            
+        except Exception as e:
+            print(f"[WARN] 计算等权隔夜收益benchmark失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _load_benchmark_curve(self, df, initial_capital):
+        """综合尝试多个来源获取等权隔夜收益benchmark累计收益"""
+        for loader in (
+            self._load_benchmark_from_history,
+            self._load_benchmark_from_recorder,
+            self._calculate_equal_weight_overnight_benchmark,
+        ):
+            series = loader(df, initial_capital)
+            if series is not None and not series.empty:
+                return series
+        return None
     
     def generate_pnl_chart_base64(self, max_days=30):
         """
@@ -585,31 +993,105 @@ class EmailSender:
             df['date'] = pd.to_datetime(df['date'])
             df = df.sort_values('date')
             
+            # 只保留2025-11-28及之后的数据（最新模型训练结果）
+            start_date = pd.to_datetime('2025-11-28')
+            df = df[df['date'] >= start_date]
+            
+            if len(df) == 0:
+                print("[WARN] 2025-11-28之后没有数据，无法生成图表")
+                return None
+            
             # 只取最近 max_days 天的数据
             if len(df) > max_days:
                 df = df.tail(max_days)
             
-            # 设置中文字体
-            plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS']
+            # 设置中文字体（尝试多种方式）
+            import matplotlib.font_manager as fm
+            # 尝试找到可用的中文字体
+            chinese_fonts = ['SimHei', 'Microsoft YaHei', 'WenQuanYi Micro Hei', 'DejaVu Sans', 'Arial Unicode MS']
+            available_fonts = [f.name for f in fm.fontManager.ttflist]
+            font_found = False
+            for font_name in chinese_fonts:
+                if font_name in available_fonts:
+                    plt.rcParams['font.sans-serif'] = [font_name]
+                    font_found = True
+                    print(f"[INFO] 使用中文字体: {font_name}")
+                    break
+            
+            if not font_found:
+                # 如果没有找到中文字体，尝试使用DejaVu Sans（至少能显示英文）
+                plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+                print("[WARN] 未找到中文字体，使用DejaVu Sans（可能无法显示中文）")
+            
             plt.rcParams['axes.unicode_minus'] = False
             
             # 创建图表（2x2布局，适合邮件显示）
             fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-            fig.suptitle('交易盈亏历史曲线', fontsize=16, fontweight='bold')
+            fig.suptitle('交易盈亏历史曲线 (自2025-11-28起)', fontsize=16, fontweight='bold')
             
-            # 1. 累计盈亏曲线
+            # 1. 累计盈亏曲线（添加benchmark对比）
             ax1 = axes[0, 0]
-            ax1.plot(df['date'], df['total_pnl'], marker='o', linewidth=2, markersize=5, 
-                     color='#2E86AB', label='累计盈亏')
+            initial_capital = df['total_capital'].iloc[0] if 'total_capital' in df.columns and len(df) > 0 else 1000000
+            if initial_capital <= 0:
+                initial_capital = 1000000
+            benchmark_series = self._load_benchmark_curve(df, initial_capital)
+            
+            # 调试信息：检查benchmark是否加载成功
+            if benchmark_series is None or len(benchmark_series) == 0:
+                print("[WARN] Benchmark未加载成功，尝试使用零基准线")
+                # 如果benchmark加载失败，使用零基准线（初始本金）
+                benchmark_series = pd.Series([0.0] * len(df), index=df['date'])
+            else:
+                print(f"[INFO] Benchmark加载成功，数据点: {len(benchmark_series)}")
+
+            # 绘制累计盈亏
+            line1 = ax1.plot(df['date'], df['total_pnl'], marker='o', linewidth=2, markersize=5, 
+                     color='#2E86AB', label='Strategy PnL', zorder=3)
             ax1.axhline(y=0, color='r', linestyle='--', linewidth=1, alpha=0.5)
+            
+            # 绘制benchmark（确保显示）
+            lines = line1
+            # 确保benchmark数据与df的日期对齐
+            try:
+                if benchmark_series.index.equals(df['date']):
+                    # 索引完全匹配
+                    benchmark_aligned = benchmark_series
+                else:
+                    # 尝试重新索引对齐
+                    benchmark_aligned = benchmark_series.reindex(df['date'], method='ffill').bfill()
+                    if benchmark_aligned.isna().all() or len(benchmark_aligned) == 0:
+                        # 如果对齐失败，使用零基准线
+                        benchmark_aligned = pd.Series([0.0] * len(df), index=df['date'])
+                        print("[WARN] Benchmark对齐失败，使用零基准线")
+            except Exception as e:
+                print(f"[WARN] Benchmark对齐过程出错: {e}，使用零基准线")
+                benchmark_aligned = pd.Series([0.0] * len(df), index=df['date'])
+            
+            line2 = ax1.plot(
+                df['date'],
+                benchmark_aligned.values,
+                linewidth=2,
+                color='orange',
+                label='Benchmark (等权隔夜收益)',
+                linestyle='--',
+                alpha=0.8,
+                zorder=2,
+            )
+            lines = line1 + line2
+            
+            # 填充区域（只在策略PnL下方）
             ax1.fill_between(df['date'], 0, df['total_pnl'], 
-                             where=(df['total_pnl'] >= 0), alpha=0.3, color='green', label='盈利区间')
+                             where=(df['total_pnl'] >= 0), alpha=0.3, color='green', label='Profit Zone')
             ax1.fill_between(df['date'], 0, df['total_pnl'], 
-                             where=(df['total_pnl'] < 0), alpha=0.3, color='red', label='亏损区间')
-            ax1.set_xlabel('日期', fontsize=10)
-            ax1.set_ylabel('累计盈亏 (元)', fontsize=10)
-            ax1.set_title('累计盈亏曲线', fontsize=12, fontweight='bold')
-            ax1.legend(fontsize=8)
+                             where=(df['total_pnl'] < 0), alpha=0.3, color='red', label='Loss Zone')
+            
+            ax1.set_xlabel('Date', fontsize=10)
+            ax1.set_ylabel('Cumulative PnL (Yuan)', fontsize=10)
+            ax1.set_title('Historical PnL Curve (Last 30 Days)', fontsize=12, fontweight='bold')
+            
+            # 更新图例
+            labels = [l.get_label() for l in lines]
+            ax1.legend(lines, labels, fontsize=8, loc='best')
             ax1.grid(True, alpha=0.3)
             ax1.tick_params(axis='x', rotation=45, labelsize=8)
             ax1.tick_params(axis='y', labelsize=8)
@@ -623,15 +1105,25 @@ class EmailSender:
                             fontsize=9, fontweight='bold', 
                             bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7))
             
-            # 2. 每日盈亏柱状图
+            # 2. 每日盈亏柱状图（只显示交易日）
             ax2 = axes[0, 1]
-            colors = ['#4CAF50' if pnl >= 0 else '#F44336' for pnl in df['daily_pnl']]
-            bars = ax2.bar(df['date'], df['daily_pnl'], color=colors, alpha=0.7, 
+            # 过滤非交易日（周末）
+            def is_trading_day(date_obj):
+                """判断是否为交易日（排除周末）"""
+                weekday = date_obj.weekday()  # 0=Monday, 6=Sunday
+                return weekday < 5  # 周一到周五
+            
+            df_trading = df[df['date'].apply(is_trading_day)].copy()
+            if len(df_trading) == 0:
+                df_trading = df  # 如果没有交易日数据，使用全部数据
+            
+            colors = ['#4CAF50' if pnl >= 0 else '#F44336' for pnl in df_trading['daily_pnl']]
+            bars = ax2.bar(df_trading['date'], df_trading['daily_pnl'], color=colors, alpha=0.7, 
                           edgecolor='black', linewidth=0.5)
             ax2.axhline(y=0, color='black', linestyle='-', linewidth=1)
-            ax2.set_xlabel('日期', fontsize=10)
-            ax2.set_ylabel('当日盈亏 (元)', fontsize=10)
-            ax2.set_title('每日盈亏柱状图', fontsize=12, fontweight='bold')
+            ax2.set_xlabel('Date', fontsize=10)
+            ax2.set_ylabel('Daily PnL (Yuan)', fontsize=10)
+            ax2.set_title('Daily PnL Bar Chart', fontsize=12, fontweight='bold')
             ax2.grid(True, alpha=0.3, axis='y')
             ax2.tick_params(axis='x', rotation=45, labelsize=8)
             ax2.tick_params(axis='y', labelsize=8)
@@ -639,7 +1131,7 @@ class EmailSender:
             # 标注最新值
             if len(bars) > 0:
                 latest_bar = bars[-1]
-                latest_daily_pnl = df['daily_pnl'].iloc[-1]
+                latest_daily_pnl = df_trading['daily_pnl'].iloc[-1]
                 height = latest_bar.get_height()
                 ax2.text(latest_bar.get_x() + latest_bar.get_width()/2., height,
                         f'{latest_daily_pnl:.0f}',
@@ -656,18 +1148,18 @@ class EmailSender:
                     loss_pct = latest['loss_count'] / total_trades * 100
                     
                     sizes = [latest['profit_count'], latest['loss_count']]
-                    labels = [f'盈利 {latest["profit_count"]}只 ({profit_pct:.1f}%)', 
-                             f'亏损 {latest["loss_count"]}只 ({loss_pct:.1f}%)']
+                    labels = [f'Profit {latest["profit_count"]} ({profit_pct:.1f}%)', 
+                             f'Loss {latest["loss_count"]} ({loss_pct:.1f}%)']
                     colors_pie = ['#4CAF50', '#F44336']
                     explode = (0.05, 0.05)
                     
                     ax3.pie(sizes, explode=explode, labels=labels, colors=colors_pie, 
                            autopct='%1.1f%%', shadow=True, startangle=90, textprops={'fontsize': 9})
-                    ax3.set_title(f'最新交易日 ({latest["date"].strftime("%Y-%m-%d")}) 盈亏分布', 
+                    ax3.set_title(f'Performance Distribution ({latest["date"].strftime("%Y-%m-%d")})', 
                                  fontsize=12, fontweight='bold')
                 else:
-                    ax3.text(0.5, 0.5, '暂无交易数据', ha='center', va='center', fontsize=12)
-                    ax3.set_title('盈亏分布', fontsize=12, fontweight='bold')
+                    ax3.text(0.5, 0.5, 'No Trading Data', ha='center', va='center', fontsize=12)
+                    ax3.set_title('Performance Distribution', fontsize=12, fontweight='bold')
             
             # 4. 累计盈亏趋势 + 交易成本
             ax4 = axes[1, 1]
@@ -675,10 +1167,10 @@ class EmailSender:
             
             # 累计盈亏
             line1 = ax4.plot(df['date'], df['total_pnl'], marker='o', linewidth=2, 
-                            markersize=5, color='#2E86AB', label='累计盈亏')
+                            markersize=5, color='#2E86AB', label='Cumulative PnL')
             ax4.axhline(y=0, color='r', linestyle='--', linewidth=1, alpha=0.5)
-            ax4.set_xlabel('日期', fontsize=10)
-            ax4.set_ylabel('累计盈亏 (元)', fontsize=10, color='#2E86AB')
+            ax4.set_xlabel('Date', fontsize=10)
+            ax4.set_ylabel('Cumulative PnL (Yuan)', fontsize=10, color='#2E86AB')
             ax4.tick_params(axis='y', labelcolor='#2E86AB', labelsize=8)
             ax4.tick_params(axis='x', rotation=45, labelsize=8)
             
@@ -686,14 +1178,14 @@ class EmailSender:
             if 'total_cost' in df.columns and df['total_cost'].sum() > 0:
                 cumulative_cost = df['total_cost'].cumsum()
                 line2 = ax4_twin.plot(df['date'], cumulative_cost, marker='s', linewidth=2, 
-                                     markersize=4, color='#FF6B35', label='累计交易成本', linestyle='--')
-                ax4_twin.set_ylabel('累计交易成本 (元)', fontsize=10, color='#FF6B35')
+                                     markersize=4, color='#FF6B35', label='Cumulative Cost', linestyle='--')
+                ax4_twin.set_ylabel('Cumulative Cost (Yuan)', fontsize=10, color='#FF6B35')
                 ax4_twin.tick_params(axis='y', labelcolor='#FF6B35', labelsize=8)
                 lines = line1 + line2
             else:
                 lines = line1
             
-            ax4.set_title('累计盈亏 vs 交易成本', fontsize=12, fontweight='bold')
+            ax4.set_title('Cumulative PnL vs Trading Cost', fontsize=12, fontweight='bold')
             ax4.grid(True, alpha=0.3)
             
             # 合并图例
@@ -840,7 +1332,7 @@ class EmailSender:
                     <strong>当日收益率:</strong> <span style="color: {daily_rate_color}; font-weight: bold;">{daily_profit_rate*100:+.2f}%</span>
                 </div>
                 <div class="summary-item" style="border-top: 2px solid #ddd; padding-top: 10px; margin-top: 10px; background-color: #fff3cd; padding: 10px; border-radius: 5px;">
-                    <strong style="font-size: 14px;">📈 历史累计盈亏（从开始记录起）:</strong> 
+                    <strong style="font-size: 14px;">📈 历史累计盈亏（自2025-11-28起，最新模型结果）:</strong> 
                     <span style="color: {historical_color}; font-weight: bold; font-size: 18px;">{historical_total_pnl:+.2f} 元</span>
                 </div>
                 <div class="summary-item">盈利数量: <span style="color: #e53935; font-weight: bold;">{win_count}</span> | 亏损数量: <span style="color: #388e3c; font-weight: bold;">{loss_count}</span></div>
@@ -934,9 +1426,21 @@ class EmailSender:
             traceback.print_exc()
             return False
     
-    def send_buy_email(self):
-        """发送买入邮件（14:45）"""
-        df = self.read_signal_csv()
+    def send_buy_email(self, target_date=None):
+        """发送买入邮件（15:40，延后一小时）
+        
+        参数:
+            target_date: 目标日期，格式 'YYYY-MM-DD'，默认为None（使用今天）
+        """
+        if target_date is None:
+            target_date = datetime.now().date()
+        else:
+            if isinstance(target_date, str):
+                target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+        
+        print(f"[INFO] 发送 {target_date} 的买入邮件...")
+        
+        df = self.read_signal_csv(target_date=target_date)
         if df is None:
             print("[ABORT] 未检测到当日真实预测CSV，取消发送买入邮件。")
             return
@@ -945,13 +1449,25 @@ class EmailSender:
             return
         buy_signals = df.sort_values('rank').head(50)
         html = self.generate_buy_email_html(buy_signals)
-        subject = f"买入信号 - {datetime.now().strftime('%Y-%m-%d')}"
+        subject = f"买入信号 - {target_date.strftime('%Y-%m-%d')}"
         success = self.send_email(subject, html, 'buy')
         if success:
-            self.save_positions(buy_signals)
+            self.save_positions(buy_signals, buy_date=target_date)
     
-    def send_sell_email(self):
-        """发送卖出邮件（10:46）"""
+    def send_sell_email(self, target_date=None):
+        """发送卖出邮件（11:46发送，仍使用10:46价格逻辑）
+        
+        参数:
+            target_date: 目标日期，格式 'YYYY-MM-DD'，默认为None（使用今天）
+        """
+        if target_date is None:
+            target_date = datetime.now().date()
+        else:
+            if isinstance(target_date, str):
+                target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+        
+        print(f"[INFO] 发送 {target_date} 的卖出邮件...")
+        
         # 读取持仓信息
         positions = self.load_positions()
         if len(positions) == 0:
@@ -960,7 +1476,7 @@ class EmailSender:
         
         # 读取10:46的预测文件（卖出信号）
         print(f"[INFO] 📖 读取10:46卖出预测文件...")
-        sell_csv_file = Path("daily_predictions_sell.csv")
+        sell_csv_file = Path(self.WORKDIR) / "daily_predictions_sell.csv"
         current_signals = {}
         signal_data_date = None
         
@@ -970,22 +1486,21 @@ class EmailSender:
                 # 检查CSV文件的时间戳
                 if 'timestamp' in df_signals.columns:
                     df_signals['timestamp'] = pd.to_datetime(df_signals['timestamp'])
-                    today = datetime.now().date()
                     
-                    # 优先使用当天的数据
-                    today_data = df_signals[df_signals['timestamp'].dt.date == today]
-                    if len(today_data) > 0:
-                        df_signals = today_data
-                        signal_data_date = today
-                        print(f"[INFO] ✅ 使用当天的10:46预测数据 ({today})")
+                    # 优先使用目标日期的数据
+                    target_data = df_signals[df_signals['timestamp'].dt.date == target_date]
+                    if len(target_data) > 0:
+                        df_signals = target_data
+                        signal_data_date = target_date
+                        print(f"[INFO] ✅ 使用目标日期 {target_date} 的10:46预测数据")
                     else:
                         # 使用最新的一条记录
                         latest_time = df_signals['timestamp'].max()
                         latest_date = latest_time.date()
                         df_signals = df_signals[df_signals['timestamp'] == latest_time]
                         signal_data_date = latest_date
-                        if latest_date < today:
-                            print(f"[WARN] ⚠️ 未找到当天10:46数据，使用历史数据: {latest_date}")
+                        if latest_date != target_date:
+                            print(f"[WARN] ⚠️ 未找到 {target_date} 的10:46数据，使用历史数据: {latest_date}")
                         else:
                             print(f"[INFO] 使用最新10:46数据: {latest_date}")
                 
@@ -1029,7 +1544,7 @@ class EmailSender:
             buy_signal = position.get('score', 0.0)  # 买入时的信号值
             sell_signal = current_signals.get(code, None)  # 卖出时的信号值（从10:46预测文件读取）
             
-            # 如果卖出信号不存在（股票不在TOP 50中），使用买入信号作为默认值
+            # 如果卖出信号不存在（股票不在预测文件中），使用买入信号作为默认值
             if sell_signal is None:
                 sell_signal = buy_signal  # 使用买入信号作为默认值
                 print(f"[WARN] {code} 未在10:46预测文件中找到，使用买入信号值: {buy_signal:.6f}")
@@ -1039,9 +1554,8 @@ class EmailSender:
                     signal_change = sell_signal - buy_signal
                     print(f"[INFO] {code} 买入信号: {buy_signal:.6f}, 卖出信号: {sell_signal:.6f}, 变化: {signal_change:+.6f}")
             
-            # 获取今天10:46的价格（卖出时间点）
-            today = datetime.now().date()
-            sell_time_str = f"{today} 10:46:00"
+            # 获取目标日期10:46的价格（卖出时间点）
+            sell_time_str = f"{target_date} 10:46:00"
             sell_price = self.get_current_price(code, target_time=sell_time_str)
             if sell_price is None:
                 print(f"[WARN] {code} 无法获取 {sell_time_str} 价格，跳过")
@@ -1057,9 +1571,16 @@ class EmailSender:
             buy_amount = buy_price * shares  # 买入金额
             sell_amount = sell_price * shares  # 卖出金额
             
+            # ====== 本金计算说明 ======
+            # 本金 = 买入金额 + 买入佣金
+            # 买入佣金 = max(买入金额 * 0.0003, 5.0)  # 万分之3，最低5元
+            # 例如：买入价10元，200股，买入金额=2000元，佣金=max(2000*0.0003, 5)=max(0.6, 5)=5元
+            # 本金 = 2000 + 5 = 2005元
+            # ======
+            
             # 计算买入成本（买入价 + 买入佣金）
             buy_commission = max(buy_amount * BUY_COMMISSION_RATE, MIN_COMMISSION)
-            buy_cost = buy_amount + buy_commission
+            buy_cost = buy_amount + buy_commission  # 这就是本金（实际投入的资金）
             
             # 计算卖出收入（卖出价 - 卖出佣金 - 印花税）
             sell_commission = max(sell_amount * SELL_COMMISSION_RATE, MIN_COMMISSION)
@@ -1067,8 +1588,9 @@ class EmailSender:
             sell_income = sell_amount - sell_commission - stamp_tax
             
             # 实际盈亏（扣除所有交易成本）
+            # 盈亏 = 卖出收入 - 买入成本（本金）
             profit = sell_income - buy_cost
-            profit_rate = (profit / buy_cost * 100) if buy_cost > 0 else 0  # 实际收益率
+            profit_rate = (profit / buy_cost * 100) if buy_cost > 0 else 0  # 实际收益率 = 盈亏 / 本金
             principal = buy_cost  # 实际投入本金（含买入佣金）
             
             # 交易成本明细（用于显示）
@@ -1184,7 +1706,7 @@ class EmailSender:
             
             # 读取该日期的14:40预测文件
             csv_filename = f"daily_predictions_{test_date.strftime('%Y%m%d')}.csv"
-            csv_file = Path(csv_filename)
+            csv_file = Path(self.WORKDIR) / csv_filename
             
             if not csv_file.exists():
                 print(f"[WARN] 预测文件不存在: {csv_filename}，跳过")
@@ -1356,15 +1878,15 @@ class EmailSender:
         print("\n" + "="*70)
         print("[SCHEDULER] 邮件发送定时任务")
         print("="*70)
-        print("[INFO] 买入邮件: 每天 14:45")
-        print("[INFO] 卖出邮件: 每天 10:46")
+        print("[INFO] 买入邮件: 每天 15:40")
+        print("[INFO] 卖出邮件: 每天 11:46（使用10:46价格数据）")
         print("="*70 + "\n")
         
         # 设置定时任务
-        schedule.every().day.at("14:45").do(self.send_buy_email)
-        schedule.every().day.at("10:46").do(self.send_sell_email)
+        schedule.every().day.at("15:40").do(self.send_buy_email)
+        schedule.every().day.at("11:46").do(self.send_sell_email)
         
-        # 检查当前时间
+        # 检查当前时间（使用北京时间）
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[TIME] 当前时间: {current_time}")
         print("[INFO] 等待定时任务触发...")
@@ -1388,17 +1910,28 @@ def main():
     parser.add_argument('--buy-now', action='store_true', help='立即发送买入邮件')
     parser.add_argument('--sell-now', action='store_true', help='立即发送卖出邮件（10:46价格逻辑）')
     parser.add_argument('--backtest-4days', action='store_true', help='发送前4天回测收益邮件（4封）')
+    parser.add_argument('--date', type=str, help='指定日期，格式: YYYY-MM-DD (例如: 2025-11-21)，用于发送指定日期的邮件')
     args = parser.parse_args()
     
     sender = EmailSender()
     
+    # 如果没有指定日期，默认使用昨天（最近的交易日，使用北京时间）
+    target_date = args.date
+    if target_date is None:
+        # 计算昨天
+        yesterday = datetime.now() - timedelta(days=1)
+        target_date = yesterday.strftime('%Y-%m-%d')
+        print(f"[INFO] 未指定日期，使用昨天: {target_date}")
+    else:
+        print(f"[INFO] 使用指定日期: {target_date}")
+    
     if args.buy_now:
-        print("[NOW] 立即发送买入邮件...")
-        sender.send_buy_email()
+        print(f"[NOW] 立即发送 {target_date} 的买入邮件...")
+        sender.send_buy_email(target_date=target_date)
         return
     if args.sell_now:
-        print("[NOW] 立即发送卖出邮件...")
-        sender.send_sell_email()
+        print(f"[NOW] 立即发送 {target_date} 的卖出邮件...")
+        sender.send_sell_email(target_date=target_date)
         return
     
     if args.backtest_4days:
