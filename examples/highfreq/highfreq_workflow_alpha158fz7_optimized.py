@@ -70,7 +70,7 @@ print(f"   - Joblib缓存: {os.environ.get('JOBLIB_MAX_NBYTES', '默认')}")
 
 # =============== 第一部分：天勤数据下载模块 ===============
 # 检查是否跳过历史数据下载（增量更新不受影响）
-SKIP_HISTORICAL_DOWNLOAD = False  # 设置为True跳过历史数据下载，False重新下载
+SKIP_HISTORICAL_DOWNLOAD = True  # 设置为True跳过历史数据下载，False重新下载
 INCREMENTAL_DOWNLOAD = True  # True 表示按现有数据的最后日期增量拉取，绝不覆盖
 MAX_DOWNLOAD_RETRIES = 3
 RETRY_DELAY_SECONDS = 60
@@ -617,8 +617,8 @@ STOCK_POOL_CSV = "/home/intern0/qlib/examples/highfreq/sorted_high_preclose_rati
 # 天勤数据时间段配置
 START_TIME = "2025-01-02 09:30:00"
 END_TIME = "2025-11-27 14:57:00"  # 覆盖到11月底，14:57避免回测越界
-TRAIN_END_TIME = "2025-08-15 14:57:00"  # 训练集覆盖至8月中旬
-TEST_START_TIME = "2025-08-18 09:30:00"  # 8月下旬开始用于测试/回测
+TRAIN_END_TIME = "2025-07-14 14:57:00"  # 训练集覆盖至8月中旬
+TEST_START_TIME = "2025-07-15 09:30:00"  # 8月下旬开始用于测试/回测
 
 print(f"🔧 天勤数据配置:")
 print(f"📂 数据目录: {KQ_DATA_DIR}")
@@ -866,7 +866,7 @@ handler_cfg['kwargs'].update({
     'start_time': '2025-01-02 09:30:00',
     'end_time': '2025-11-27 14:57:00',
     'fit_start_time': '2025-01-02 09:30:00',
-    'fit_end_time': '2025-08-15 14:57:00'
+    'fit_end_time': '2025-07-14 14:57:00'
 })
 
 dataset_task['kwargs']['handler'] = handler_cfg
